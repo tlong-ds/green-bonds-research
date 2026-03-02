@@ -426,7 +426,6 @@ FUEKIV30.HM,Vietnam,
 FUESSVFL.HM,Vietnam,
 FUETCC50.HM,Vietnam,
 FUESSV50.HM,Vietnam,
-ticker,country,gic
 DELTA.BK,Thailand,1.0
 PTT.BK,Thailand,2.0
 ADVANC.BK,Thailand,2.0
@@ -1544,7 +1543,6 @@ TENCENT19x.BK,Thailand,
 TSLA80x.BK,Thailand,
 TOYOTA80x.BK,Thailand,
 WUXI13x.BK,Thailand,
-ticker,country,gic
 MBBM.KL,Malaysia,4.0
 PUBM.KL,Malaysia,4.0
 CIMB.KL,Malaysia,4.0
@@ -2506,7 +2504,6 @@ VPDJ.KL,Malaysia,
 YONGq.KL,Malaysia,
 EQDI.KL,Malaysia,
 EQDJ.KL,Malaysia,
-ticker,country,gic
 DBSM.SI,Singapore,4.0
 OCBC.SI,Singapore,4.0
 STEL.SI,Singapore,2.0
@@ -3581,7 +3578,6 @@ LIOO.SI,Singapore,
 PNOV-D.SI,Singapore,
 SOUUy.F,Other,
 B8O0y.F,Other,
-ticker,country,gic
 ICT.PS,Philippines,3.0
 BPI.PS,Philippines,4.0
 SM.PS,Philippines,1.0
@@ -3953,7 +3949,6 @@ SMC2U.PS,Philippines,
 SMC2N.PS,Philippines,
 SFIP.PS,Philippines,
 VLL2B.PS,Philippines,
-ticker,country,gic
 BREN.JK,Indonesia,1.0
 BBCA.JK,Indonesia,4.0
 BBRI.JK,Indonesia,4.0
@@ -4959,7 +4954,6 @@ XSPI.JK,Indonesia,
 XISR.JK,Indonesia,
 XMIG.JK,Indonesia,
 XPTD.JK,Indonesia,
-ticker,country,gic
 009830.KS,Other,1.0
 0855.HK,Other,1.0
 ADVANC.BK,Thailand,2.0
