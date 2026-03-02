@@ -1,3 +1,4 @@
+import os
 import pandas as pd 
 import numpy as np
 
@@ -36,9 +37,38 @@ ESG_ATTRIBUTE_COLUMNS = {
     # "Environmental Innovation Data Point": "environmental_innovation"
 }
 
+WORLDSCOPE_TO_ATTRIBUTE = {
+    "MV": "MARKET VALUE",
+    "PA": "ASK PRICE",
+    "PB": "BID PRICE",
+    "RI": "TOT RETURN IND",
+    "WC01001": "NET SALES OR REVENUES",
+    "WC01075": "INTEREST EXPENSE - TOTAL",
+    "WC01250": "OPERATING INCOME",
+    "WC02003": "CASH",
+    "WC02201": "CURRENT ASSETS - TOTAL",
+    "WC02999": "TOTAL ASSETS",
+    "WC03101": "CURRENT LIABILITIES-TOTAL",
+    "WC03251": "LONG TERM DEBT",
+    "WC03255": "TOTAL DEBT",
+    "WC03351": "TOTAL LIABILITIES",
+    "WC03998": "TOTAL CAPITAL",
+    "WC04601": "CAPITAL EXPENDITURES",
+    "WC04860": "NET CASH FLOW-OPERATING ACTIVS",
+    "WC07011": "EMPLOYEES",
+    "WC08001": "MARKET CAPITALIZATION",
+    "WC08301": "RETURN ON EQUITY - TOTAL (%)",
+    "WC08326": "RETURN ON ASSETS",
+    "WC18191": "EARNINGS BEF INTEREST & TAXES",
+}
+
 COUNTRIES = ["Vietnam", "Thailand", "Malaysia", "Singapore", "Indonesia", "Philippines", "Other"]
-TS_SHEET_NAME = ["Sheet9", "Sheet10", "Sheet11", "Sheet12", "Sheet13", "Sheet14", "Sheet15"]
-SERIES_SHEET_NAME = ["Sheet16", "Sheet17", "Sheet18", "Sheet19", "Sheet20", "Sheet21", "Sheet22"]
+# NOTE: In the Excel file, TS Sheet13 contains Philippines (.PS) and Sheet14 contains Indonesia (.JK).
+#       Similarly, Series Sheet20 contains Philippines and Sheet21 contains Indonesia.
+#       The sheet order below is swapped (14 before 13, 21 before 20) to align with COUNTRIES.
+#       ESG sheets (Sheet1-7) already match COUNTRIES order and need no swap.
+TS_SHEET_NAME = ["Sheet9", "Sheet10", "Sheet11", "Sheet12", "Sheet14", "Sheet13", "Sheet15"]
+SERIES_SHEET_NAME = ["Sheet16", "Sheet17", "Sheet18", "Sheet19", "Sheet21", "Sheet20", "Sheet22"]
 ESG_SHEET_NAME = ["Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7"]
 
 
@@ -60,6 +90,11 @@ def longest_common_suffix(names):
     return common[::-1].strip().lstrip('- ').strip()
 
 if __name__ == "__main__":
+    # Remove existing CSVs to prevent double-appending on re-run
+    for f in ["data/panel_data.csv", "data/esg_panel_data.csv", "data/series_data.csv"]:
+        if os.path.exists(f):
+            os.remove(f)
+
     # Extract Time Series Data
     for sheet_name, country in zip(TS_SHEET_NAME, COUNTRIES):
         df = read_data(sheet_name)
@@ -79,20 +114,19 @@ if __name__ == "__main__":
             df['country'] = country
         
         attr_code = df['Code'].str.extract(r'\((.+)\)$')[0]
-        attr_map = df.groupby(attr_code)['Name'].apply(
-            lambda g: longest_common_suffix(g.tolist())
-        )
-
-        attribute_raw = attr_code.map(attr_map)
+        # Map WC codes directly to attribute names instead of using
+        # longest_common_suffix (which breaks when any company name
+        # uses the format "COMPANY - WC02999" instead of "COMPANY - TOTAL ASSETS")
+        attribute_raw = attr_code.map(WORLDSCOPE_TO_ATTRIBUTE)
         
         # Extract ticker code (e.g., VIC.HM from VIC.HM(WC02999))
         df['ticker'] = df['Code'].str.extract(r'^(.+?)\(')[0]
 
         df['attribute'] = attribute_raw
-        df['company'] = df.apply(
-            lambda row: row['Name'][:-(len(row['attribute']) + 3)] if pd.notna(row['attribute']) else row['Name'],
-            axis=1
-        )
+        # Extract company name by stripping the " - ATTRIBUTE" or " - WC_CODE" suffix
+        df['company'] = df['Name'].str.replace(r'\s*-\s*(?:' + '|'.join(
+            list(ATTRIBUTE_COLUMNS.keys()) + list(WORLDSCOPE_TO_ATTRIBUTE.keys())
+        ).replace('(', r'\(').replace(')', r'\)') + r')\s*$', '', regex=True)
 
         # Step 2: Map attributes and filter to only known ones
         df['attr_col'] = df['attribute'].map(ATTRIBUTE_COLUMNS)
@@ -115,7 +149,6 @@ if __name__ == "__main__":
             aggfunc='first'
         ).reset_index()
 
-        import os
         header = not os.path.exists("data/panel_data.csv")
         df_wide.to_csv(f"data/panel_data.csv", index=False, mode='a', header=header)
 
@@ -150,7 +183,6 @@ if __name__ == "__main__":
                 "gic": df[ticker].iloc[0]
             })
         
-        import os
         header = not os.path.exists("data/series_data.csv")
         df_new = pd.DataFrame(new_data)
         df_new.to_csv(f"data/series_data.csv", index=False, mode='a', header=header)
@@ -217,7 +249,11 @@ if __name__ == "__main__":
             if col not in df_wide.columns:
                 df_wide[col] = np.nan
 
-        import os
+        # Strip whitespace from string columns to prevent downstream issues
+        # (e.g., environmental_investment values stored as 'Y   ' instead of 'Y')
+        for col in df_wide.select_dtypes(include='object').columns:
+            df_wide[col] = df_wide[col].apply(lambda x: x.strip() if isinstance(x, str) else x)
+
         header = not os.path.exists("data/esg_panel_data.csv")
         df_wide.to_csv(f"data/esg_panel_data.csv", index=False, mode='a', header=header)
 
