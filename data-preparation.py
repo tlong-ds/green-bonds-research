@@ -27,11 +27,13 @@ ATTRIBUTE_COLUMNS = {
 }
 
 ESG_ATTRIBUTE_COLUMNS = {
-    "Esg Score": "esg_score",
+    "ESG Score": "esg_score",
     "Internal Carbon Pricing": "internal_carbon_pricing",
-    "GHG Emmisions Scope 1 and 2 and 3 Estimated Total": "estimated_total_carbon_footprint",
+    "Internal Carbon Price per Tonne": "internal_carbon_price_per_tonne",
+    "GHG Emissions Scope 1 and 2 and 3 Estimated Total": "estimated_total_carbon_footprint",
     "GHG Emissions Scope 1 2 3 Estimated Total To Revenue USD in Million": "emissions_intensity",
-    "Value - Emission Reduction/Environmental Expenditures": "environmental_investment"
+    "Value - Emission Reduction/Environmental Expenditures": "environmental_investment",
+    # "Environmental Innovation Data Point": "environmental_innovation"
 }
 
 COUNTRIES = ["Vietnam", "Thailand", "Malaysia", "Singapore", "Indonesia", "Philippines", "Other"]
@@ -203,6 +205,13 @@ if __name__ == "__main__":
             values='value',
             aggfunc='first'
         ).reset_index()
+
+        # Ensure all expected ESG columns are present (some sheets may lack
+        # certain attributes, e.g. Vietnam has no "Internal Carbon Price per Tonne")
+        all_esg_cols = list(ESG_ATTRIBUTE_COLUMNS.values())
+        for col in all_esg_cols:
+            if col not in df_wide.columns:
+                df_wide[col] = np.nan
 
         df_wide.to_csv(f"data/esg_panel_data.csv", index=False, mode='a')
 
