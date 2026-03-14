@@ -72,10 +72,21 @@ SERIES_SHEET_NAME = ["Sheet16", "Sheet17", "Sheet18", "Sheet19", "Sheet21", "She
 ESG_SHEET_NAME = ["Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7"]
 
 
+DATA_FILE = "data2802.xlsx"
+
 def read_data(sheet_name: str, header: int = 3):
-    df = pd.read_excel("data2802.xlsx", engine="openpyxl", sheet_name=sheet_name, header=header)
+    if not os.path.exists(DATA_FILE):
+        raise FileNotFoundError(
+            f"Source file '{DATA_FILE}' not found. "
+            f"Place the Refinitiv export in the project root directory."
+        )
+    df = pd.read_excel(DATA_FILE, engine="openpyxl", sheet_name=sheet_name, header=header)
     if "Name" in df.columns:
-        df = df[df["Name"]!="#ERROR"]
+        n_before = len(df)
+        df = df[df["Name"] != "#ERROR"]
+        n_dropped = n_before - len(df)
+        if n_dropped > 0:
+            print(f"  [{sheet_name}] Dropped {n_dropped} rows with #ERROR in Name column")
 
     return df
 
@@ -90,10 +101,19 @@ def longest_common_suffix(names):
     return common[::-1].strip().lstrip('- ').strip()
 
 if __name__ == "__main__":
+    # Validate source file exists before any processing
+    if not os.path.exists(DATA_FILE):
+        print(f"ERROR: '{DATA_FILE}' not found in {os.getcwd()}")
+        print("Please place the Refinitiv data export file in the project root.")
+        exit(1)
+
     # Remove existing CSVs to prevent double-appending on re-run
+    os.makedirs("data", exist_ok=True)
     for f in ["data/panel_data.csv", "data/esg_panel_data.csv", "data/series_data.csv"]:
         if os.path.exists(f):
             os.remove(f)
+
+    print(f"Processing {DATA_FILE}...")
 
     # Extract Time Series Data
     for sheet_name, country in zip(TS_SHEET_NAME, COUNTRIES):

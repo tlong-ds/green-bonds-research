@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "r-econometrics": {
+      "source": "meleantonio/awesome-econ-ai-stuff",
+      "sourceType": "github",
+      "computedHash": "696f618a91af165b33e3cf00baf4379d4d7bbd559db7930cd7f116dd2ef0d816"
+    }
+  }
+}
