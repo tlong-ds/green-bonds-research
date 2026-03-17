@@ -1,3 +1,4 @@
+
 # Code Evaluation Report: ASEAN Green Bonds Research (2015-2025)
 
 ## 1. Executive Summary
@@ -54,3 +55,55 @@ This report evaluates the data preparation and econometric modeling pipeline for
 | **Medium** | **Dynamic DiD Plot** | Generate an Event Study plot with coefficients for years $T-3$ to $T+3$ to formally test Parallel Trends. |
 
 **Final Verdict:** The codebase provides a solid infrastructure for panel analysis, but the causal claims are currently weakened by the lack of matched controls and the absence of greenwashing diagnostics. Addressing these two points will significantly elevate the research's credibility.
+
+
+🔴 Critical Issues Found: 10 total
+
+  CRITICAL BLOCKER:
+
+   1. PSM Matching Disabled
+  (methodology-and-result.ipynb Cell 2) -
+   Selection bias completely unchecked
+
+  HIGH PRIORITY: 2. Greenwashing
+  Hypothesis Untestable - No is_certified
+  variable (CBI certification missing) 3.
+  Survivorship Bias Undocumented - Data
+  from static Excel likely excludes
+  delisted firms
+
+  📊 Alignment Score: 22% (Target: 95%+)
+
+   - CHAPTER 3 (Methodology): 43% ⚠️
+   - CHAPTER 4 (Results): 50% ⚠️
+   - Other chapters: 0-40% (conceptual
+  layers not in code)
+
+  ✅ What's Working:
+
+   - Data extraction (28 financial
+  variables)
+   - Statistical methods (clustered SE,
+  LassoCV)
+   - Panel data structure
+
+  📋 5 Reports Generated (38 KB total):
+
+   1. README.md - Entry point & quick
+  navigation
+   2. EVALUATION_INDEX.md - Master index
+  + FAQ
+   3. quick_reference.md - 5-minute
+  summary
+   4. code_evaluation_report.md -
+  Technical deep dive
+   5. misalignment_summary.txt - Visual
+  scorecards
+
+  Location: /Users/bunnypro/.copilot/sess
+  ion-state/d0837868-fac3-44dd-ae1e-fde5a
+  23691c2/
+
+  Current Confidence: 45% 🔴 | Post-Fix:
+  85% 🟢 - Cannot publish causal claims
+  until PSM + H3 fixed.
