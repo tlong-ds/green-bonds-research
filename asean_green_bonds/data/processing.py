@@ -340,7 +340,10 @@ def winsorize_outliers(
             continue
         
         if df[col].notna().sum() > 0:
-            df[col] = winsorize(df[col].dropna(), limits=(lower, upper))
+            # Preserve NaN positions by creating a mask and applying winsorize only to non-NaN values
+            mask = df[col].notna()
+            winsorized_values = winsorize(df[col][mask], limits=(lower, upper))
+            df.loc[mask, col] = winsorized_values
     
     return df
 

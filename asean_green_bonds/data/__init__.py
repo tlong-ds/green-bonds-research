@@ -37,6 +37,11 @@ from .feature_selection import (
     stepwise_selection,
     compile_selected_features,
     create_feature_selection_report,
+    # Diagnostic functions
+    diagnose_multicollinearity,
+    validate_specification,
+    compare_specifications,
+    DiagnosticReport,
 )
 
 __all__ = [
@@ -66,4 +71,9 @@ __all__ = [
     "stepwise_selection",
     "compile_selected_features",
     "create_feature_selection_report",
+    # Diagnostic functions
+    "diagnose_multicollinearity",
+    "validate_specification",
+    "compare_specifications",
+    "DiagnosticReport",
 ]
