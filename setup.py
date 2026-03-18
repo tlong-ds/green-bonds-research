@@ -73,8 +73,8 @@ setup(
         "environmental sustainability",
     ],
     project_urls={
-        "Documentation": "https://github.com/yourusername/asean-green-bonds/tree/main/docs",
-        "Source": "https://github.com/yourusername/asean-green-bonds",
-        "Tracker": "https://github.com/yourusername/asean-green-bonds/issues",
+        "Documentation": "https://github.com/tlong-ds/asean-green-bonds/tree/main/docs",
+        "Source": "https://github.com/tlong-ds/asean-green-bonds",
+        "Tracker": "https://github.com/tlong-ds/asean-green-bonds/issues",
     },
 )
