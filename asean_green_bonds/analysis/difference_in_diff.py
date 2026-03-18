@@ -145,7 +145,8 @@ def estimate_did(
         # Add time dummies manually - using indices from cleaned data
         time_dummies = pd.get_dummies(y.index.get_level_values(time_col), drop_first=True)
         time_dummies.index = y.index
-        X = X.join(time_dummies)
+        # Use concat instead of join to avoid cartesian product with non-unique indices
+        X = pd.concat([X, time_dummies], axis=1)
         model = PanelOLS(y, X, entity_effects=False, time_effects=False)
     
     # Estimate
