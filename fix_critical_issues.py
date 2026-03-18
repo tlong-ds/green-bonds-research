@@ -1079,3 +1079,298 @@ def specification_robustness_table(df_panel, treatment_col='did', outcomes=None,
     
     return pd.DataFrame(results)
 
+def greenwashing_hypothesis_h3_corrected(df_panel, treatment_col='green_bond_active',
+                                         certification_col='is_certified', outcomes=None,
+                                         controls=None):
+    """
+    Corrected H3 Hypothesis Testing: Certified vs Non-Certified Bonds
+    
+    H3: Certified green bonds show stronger effects on outcomes than non-certified bonds
+    
+    Uses is_certified (correct indicator) instead of certified_bond_active
+    (which has no variation within green bond issuers)
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        treatment_col: Green bond indicator (green_bond_active)
+        certification_col: Certification indicator (is_certified)
+        outcomes: List of outcome variables
+        controls: List of control variables
+    
+    Returns:
+        dict: Results for certified, non-certified, and comparison
+    """
+    import pandas as pd
+    import numpy as np
+    
+    if outcomes is None:
+        outcomes = ['return_on_assets', 'Tobin_Q', 'esg_score']
+    if controls is None:
+        controls = ['L1_Firm_Size', 'L1_Leverage']
+    
+    df_reg = df_panel.copy()
+    
+    # Create subgroups
+    df_reg['group'] = 'control'  # Default: control (never issued)
+    df_reg.loc[df_reg[treatment_col] == 1, 'group'] = 'non_cert'  # Non-certified issuers
+    df_reg.loc[df_reg[certification_col] == 1, 'group'] = 'certified'  # Certified issuers
+    
+    # Count observations in each group
+    group_counts = df_reg['group'].value_counts()
+    
+    print(f"\nGroup Sizes:")
+    print(f"  Certified issuers: {group_counts.get('certified', 0)}")
+    print(f"  Non-certified issuers: {group_counts.get('non_cert', 0)}")
+    print(f"  Control (never issued): {group_counts.get('control', 0)}")
+    
+    results = {}
+    
+    for outcome in outcomes:
+        print(f"\nTesting {outcome}:")
+        
+        try:
+            from linearmodels.panel import PanelOLS
+            
+            controls_str = ' + '.join(controls)
+            
+            # Test certified vs control
+            df_cert = df_reg[df_reg['group'].isin(['certified', 'control'])].copy()
+            df_cert['treat_certified'] = (df_cert['group'] == 'certified').astype(int)
+            
+            formula_cert = f"{outcome} ~ treat_certified + {controls_str} + EntityEffects"
+            reg_data_cert = df_cert.dropna(subset=[outcome, 'treat_certified'] + controls)
+            
+            if len(reg_data_cert) > 50:
+                mod_cert = PanelOLS.from_formula(formula_cert, data=reg_data_cert)
+                res_cert = mod_cert.fit(cov_type='clustered', cluster_entity=True, disp='off')
+                coef_cert = res_cert.params.get('treat_certified', np.nan)
+                se_cert = res_cert.std_errors.get('treat_certified', np.nan)
+                pval_cert = res_cert.pvalues.get('treat_certified', np.nan)
+            else:
+                coef_cert = se_cert = pval_cert = np.nan
+            
+            # Test non-certified vs control
+            df_nonc = df_reg[df_reg['group'].isin(['non_cert', 'control'])].copy()
+            df_nonc['treat_noncert'] = (df_nonc['group'] == 'non_cert').astype(int)
+            
+            formula_nonc = f"{outcome} ~ treat_noncert + {controls_str} + EntityEffects"
+            reg_data_nonc = df_nonc.dropna(subset=[outcome, 'treat_noncert'] + controls)
+            
+            if len(reg_data_nonc) > 50:
+                mod_nonc = PanelOLS.from_formula(formula_nonc, data=reg_data_nonc)
+                res_nonc = mod_nonc.fit(cov_type='clustered', cluster_entity=True, disp='off')
+                coef_nonc = res_nonc.params.get('treat_noncert', np.nan)
+                se_nonc = res_nonc.std_errors.get('treat_noncert', np.nan)
+                pval_nonc = res_nonc.pvalues.get('treat_noncert', np.nan)
+            else:
+                coef_nonc = se_nonc = pval_nonc = np.nan
+            
+            # Compare effects
+            effect_diff = coef_nonc - coef_cert if not np.isnan(coef_cert) and not np.isnan(coef_nonc) else np.nan
+            
+            results[outcome] = {
+                'certified_coef': coef_cert,
+                'certified_se': se_cert,
+                'certified_pval': pval_cert,
+                'noncert_coef': coef_nonc,
+                'noncert_se': se_nonc,
+                'noncert_pval': pval_nonc,
+                'effect_difference': effect_diff,
+                'certified_stronger': (coef_cert > coef_nonc) if not np.isnan(effect_diff) else None
+            }
+            
+            print(f"  Certified effect: {coef_cert:.6f} (SE={se_cert:.6f}, p={pval_cert:.4f})")
+            print(f"  Non-certified effect: {coef_nonc:.6f} (SE={se_nonc:.6f}, p={pval_nonc:.4f})")
+            print(f"  Difference: {effect_diff:.6f} {'(certified > non-cert ✓)' if (coef_cert > coef_nonc) else '(non-cert ≥ certified)'}")
+        
+        except Exception as e:
+            print(f"  Error: {str(e)[:80]}")
+            results[outcome] = {'error': str(e)}
+    
+    return results
+
+
+def greenwashing_intensity_analysis(df_panel, outcomes=None, controls=None):
+    """
+    Test greenwashing using green bond proceeds intensity.
+    
+    Alternative to certified/non-certified distinction.
+    Hypothesis: Firms with larger green bond commitments show stronger effects.
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        outcomes: List of outcome variables
+        controls: List of control variables
+    
+    Returns:
+        dict: Results by intensity quartiles
+    """
+    import pandas as pd
+    import numpy as np
+    
+    if outcomes is None:
+        outcomes = ['return_on_assets', 'Tobin_Q', 'esg_score']
+    if controls is None:
+        controls = ['L1_Firm_Size', 'L1_Leverage']
+    
+    df_reg = df_panel.copy()
+    
+    # Calculate green bond intensity (GB proceeds / total debt)
+    df_reg['gb_intensity'] = 0.0
+    
+    # For non-zero green bond proceeds
+    mask = (df_reg['green_bond_proceeds'] > 0) & (df_reg['total_debt'] > 0)
+    df_reg.loc[mask, 'gb_intensity'] = df_reg.loc[mask, 'green_bond_proceeds'] / df_reg.loc[mask, 'total_debt']
+    
+    # Cap at 1.0 (can't have more than 100% of debt as green)
+    df_reg['gb_intensity'] = df_reg['gb_intensity'].clip(0, 1.0)
+    
+    # Create intensity groups
+    df_reg['intensity_group'] = 'no_gb'
+    mask_low = (df_reg['gb_intensity'] > 0) & (df_reg['gb_intensity'] < 0.33)
+    mask_mid = (df_reg['gb_intensity'] >= 0.33) & (df_reg['gb_intensity'] < 0.67)
+    mask_high = df_reg['gb_intensity'] >= 0.67
+    
+    df_reg.loc[mask_low, 'intensity_group'] = 'low'
+    df_reg.loc[mask_mid, 'intensity_group'] = 'mid'
+    df_reg.loc[mask_high, 'intensity_group'] = 'high'
+    
+    print(f"\nGreen Bond Intensity Analysis:")
+    print(f"Group sizes:")
+    print(df_reg['intensity_group'].value_counts())
+    
+    results = {}
+    
+    for outcome in outcomes:
+        print(f"\n{outcome} by intensity group:")
+        
+        try:
+            from linearmodels.panel import PanelOLS
+            
+            controls_str = ' + '.join(controls)
+            
+            # Create intensity dummies
+            df_reg['int_low'] = (df_reg['intensity_group'] == 'low').astype(int)
+            df_reg['int_mid'] = (df_reg['intensity_group'] == 'mid').astype(int)
+            df_reg['int_high'] = (df_reg['intensity_group'] == 'high').astype(int)
+            
+            formula = f"{outcome} ~ int_low + int_mid + int_high + {controls_str} + EntityEffects"
+            
+            reg_data = df_reg.dropna(subset=[outcome, 'int_low', 'int_mid', 'int_high'] + controls)
+            
+            if len(reg_data) > 100:
+                mod = PanelOLS.from_formula(formula, data=reg_data)
+                res = mod.fit(cov_type='clustered', cluster_entity=True, disp='off')
+                
+                coef_low = res.params.get('int_low', np.nan)
+                coef_mid = res.params.get('int_mid', np.nan)
+                coef_high = res.params.get('int_high', np.nan)
+                
+                pval_low = res.pvalues.get('int_low', np.nan)
+                pval_mid = res.pvalues.get('int_mid', np.nan)
+                pval_high = res.pvalues.get('int_high', np.nan)
+                
+                print(f"  Low intensity: {coef_low:.6f} (p={pval_low:.4f})")
+                print(f"  Mid intensity: {coef_mid:.6f} (p={pval_mid:.4f})")
+                print(f"  High intensity: {coef_high:.6f} (p={pval_high:.4f})")
+                
+                # Dose-response: does effect increase with intensity?
+                dose_response = coef_high - coef_low if not np.isnan(coef_high) and not np.isnan(coef_low) else np.nan
+                print(f"  Dose-response (high - low): {dose_response:.6f} {'✓ increasing' if dose_response > 0 else '✗ not increasing'}")
+                
+                results[outcome] = {
+                    'low': coef_low,
+                    'mid': coef_mid,
+                    'high': coef_high,
+                    'p_low': pval_low,
+                    'p_mid': pval_mid,
+                    'p_high': pval_high,
+                    'dose_response': dose_response
+                }
+        
+        except Exception as e:
+            print(f"  Error: {str(e)[:80]}")
+            results[outcome] = {'error': str(e)}
+    
+    return results
+
+
+def esg_trajectory_analysis(df_panel, certification_col='is_certified',
+                            outcomes=None):
+    """
+    Test greenwashing using ESG score trajectory post-issuance.
+    
+    Hypothesis: Certified bonds show faster ESG improvement,
+                non-certified may show slower improvement (greenwashing indicator).
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        certification_col: Certification indicator (is_certified)
+        outcomes: ESG-related outcomes to test
+    
+    Returns:
+        dict: ESG trajectory by group
+    """
+    import pandas as pd
+    import numpy as np
+    
+    if outcomes is None:
+        outcomes = ['esg_score', 'ln_emissions_intensity']
+    
+    df_reg = df_panel.copy()
+    
+    # Identify treatment year for each firm
+    # Create group indicator
+    df_reg['group'] = 'control'
+    df_reg.loc[df_reg[certification_col] == 1, 'group'] = 'certified'
+    
+    # Find non-certified issuers
+    mask_noncert = (df_reg['green_bond_active'] == 1) & (df_reg[certification_col] == 0)
+    df_reg.loc[mask_noncert, 'group'] = 'non_cert'
+    
+    print(f"\nESG Trajectory Analysis:")
+    print(f"Group sizes: {df_reg['group'].value_counts().to_dict()}")
+    
+    results = {}
+    
+    for outcome in outcomes:
+        print(f"\n{outcome} trajectory by group:")
+        
+        # Compare mean outcomes by group
+        group_stats = df_reg.groupby('group')[outcome].agg(['count', 'mean', 'std'])
+        print(group_stats)
+        
+        # T-tests comparing groups
+        from scipy import stats as sp_stats
+        
+        certified = df_reg[df_reg['group'] == 'certified'][outcome].dropna()
+        noncert = df_reg[df_reg['group'] == 'non_cert'][outcome].dropna()
+        control = df_reg[df_reg['group'] == 'control'][outcome].dropna()
+        
+        # Certified vs Control
+        if len(certified) > 10 and len(control) > 10:
+            t_cc, p_cc = sp_stats.ttest_ind(certified, control)
+            print(f"  Certified vs Control: t={t_cc:.4f}, p={p_cc:.4f}")
+        
+        # Non-certified vs Control
+        if len(noncert) > 10 and len(control) > 10:
+            t_nc, p_nc = sp_stats.ttest_ind(noncert, control)
+            print(f"  Non-cert vs Control: t={t_nc:.4f}, p={p_nc:.4f}")
+        
+        # Certified vs Non-certified
+        if len(certified) > 10 and len(noncert) > 10:
+            t_cn, p_cn = sp_stats.ttest_ind(certified, noncert)
+            print(f"  Certified vs Non-cert: t={t_cn:.4f}, p={p_cn:.4f}")
+            print(f"    → {'Certified significantly different' if p_cn < 0.05 else 'No significant difference'}")
+        
+        results[outcome] = {
+            'certified_mean': certified.mean() if len(certified) > 0 else np.nan,
+            'noncert_mean': noncert.mean() if len(noncert) > 0 else np.nan,
+            'control_mean': control.mean() if len(control) > 0 else np.nan,
+            'certified_count': len(certified),
+            'noncert_count': len(noncert),
+            'control_count': len(control)
+        }
+    
+    return results
+
