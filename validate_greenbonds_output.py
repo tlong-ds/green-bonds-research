@@ -101,3 +101,5 @@ if __name__ == "__main__":
     output_file = sys.argv[1] if len(sys.argv) > 1 else 'data/green_bonds_lseg_full.csv'
     success = validate_output(output_file)
     sys.exit(0 if success else 1)
+
+╭ I see the LSEG retrieval is failing with "Unable to resolve identifiers" and "Inv…╮
