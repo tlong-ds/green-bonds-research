@@ -145,7 +145,7 @@ def estimate_did(
     
     # Extract treatment coefficient
     treatment_idx = 0  # First regressor is treatment
-    coef = results.beta.iloc[treatment_idx]
+    coef = results.params.iloc[treatment_idx]
     se = results.std_errors.iloc[treatment_idx]
     t_stat = results.tstats.iloc[treatment_idx]
     p_value = results.pvalues.iloc[treatment_idx]
@@ -158,8 +158,8 @@ def estimate_did(
         'std_error': se,
         't_statistic': t_stat,
         'p_value': p_value,
-        'r_squared': results.r2,
-        'adj_r_squared': results.r2_within,
+        'r_squared': results.rsquared,  # Use rsquared instead of r2
+        'adj_r_squared': results.rsquared_within,  # Use rsquared_within instead of r2_within
         'n_obs': len(y),
         'n_entities': len(df_reg.index.get_level_values(0).unique()),
         'n_periods': len(df_reg.index.get_level_values(1).unique()),
