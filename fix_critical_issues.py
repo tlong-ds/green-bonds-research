@@ -627,7 +627,7 @@ def calculate_moulton_factor(df_panel, outcome, residuals=None):
     
     moulton_factor = np.sqrt(1 + rho_est * (m_bar - 1))
     
-    return moulton_factor, m_bar, rho_est
+    return moulton_factor
 
 
 def document_se_clustering(regression_results, panel_df=None, outcome_var=None):
