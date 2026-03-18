@@ -144,11 +144,19 @@ def estimate_did(
         }
     
     # Extract treatment coefficient
-    treatment_idx = 0  # First regressor is treatment
-    coef = results.params.iloc[treatment_idx]
-    se = results.std_errors.iloc[treatment_idx]
-    t_stat = results.tstats.iloc[treatment_idx]
-    p_value = results.pvalues.iloc[treatment_idx]
+    if treatment_col in results.params.index:
+        coef = results.params[treatment_col]
+        se = results.std_errors[treatment_col]
+        t_stat = results.tstats[treatment_col]
+        p_value = results.pvalues[treatment_col]
+    else:
+        # Treatment variable not in results, return error
+        return {
+            'error': f"Treatment variable '{treatment_col}' not found in model results",
+            'outcome': outcome,
+            'specification': specification,
+            'n_obs': len(y),
+        }
     
     return {
         'outcome': outcome,
