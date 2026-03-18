@@ -58,15 +58,19 @@ def placebo_test(
     df_placebo = df_placebo.set_index([entity_col, time_col])
     
     # Regress outcome on placebo treatment
-    X = df_placebo[[f'{treatment_col}_placebo']].dropna()
-    y = df_placebo.loc[X.index, outcome].dropna()
-    X = X[y.index]
+    X = df_placebo[[f'{treatment_col}_placebo']]
+    y = df_placebo[outcome]
+    
+    # Align data properly
+    df_aligned = pd.concat([X, y], axis=1).dropna()
+    X = df_aligned[[f'{treatment_col}_placebo']]
+    y = df_aligned[outcome]
     
     try:
         model = PanelOLS(y, X, entity_effects=True, time_effects=False)
         results = model.fit(cov_type='clustered', cluster_entity=True)
         
-        placebo_effect = results.beta.iloc[0]
+        placebo_effect = results.params.iloc[0]
         placebo_se = results.std_errors.iloc[0]
         placebo_tstat = results.tstats.iloc[0]
         placebo_pval = results.pvalues.iloc[0]
@@ -137,14 +141,18 @@ def leave_one_out_cv(
         
         df_fold = df_fold.set_index([entity_col, time_col])
         
-        X = df_fold[[treatment_col]].dropna()
-        y = df_fold.loc[X.index, outcome].dropna()
-        X = X[y.index]
+        X = df_fold[[treatment_col]]
+        y = df_fold[outcome]
+        
+        # Align data properly
+        df_aligned = pd.concat([X, y], axis=1).dropna()
+        X = df_aligned[[treatment_col]]
+        y = df_aligned[outcome]
         
         try:
             model = PanelOLS(y, X, entity_effects=True, time_effects=False)
             results = model.fit(cov_type='clustered', cluster_entity=True)
-            coefficients.append(results.beta.iloc[0])
+            coefficients.append(results.params.iloc[0])
         except:
             pass
     
@@ -224,11 +232,11 @@ def specification_sensitivity(
                 'specification': f'Spec_{spec_num+1}',
                 'n_controls': len(controls),
                 'controls': ', '.join(controls) if controls else 'None',
-                'coefficient': est.beta.iloc[0],
+                'coefficient': est.params.iloc[0],
                 'std_error': est.std_errors.iloc[0],
                 't_statistic': est.tstats.iloc[0],
                 'p_value': est.pvalues.iloc[0],
-                'r2_within': est.r2_within,
+                'r2_within': est.rsquared_within,
                 'n_obs': len(y),
             })
         except Exception as e:
@@ -287,16 +295,20 @@ def heterogeneous_effects_analysis(
         df_group = df[df[heterogeneity_var] == group_val]
         df_group = df_group.set_index([entity_col, time_col])
         
-        X = df_group[[treatment_col]].dropna()
-        y = df_group.loc[X.index, outcome].dropna()
-        X = X[y.index]
+        X = df_group[[treatment_col]]
+        y = df_group[outcome]
+        
+        # Align data properly
+        df_aligned = pd.concat([X, y], axis=1).dropna()
+        X = df_aligned[[treatment_col]]
+        y = df_aligned[outcome]
         
         try:
             model = PanelOLS(y, X, entity_effects=True, time_effects=False)
             results = model.fit(cov_type='clustered', cluster_entity=True)
             
             effects[f'{heterogeneity_var}_{group_val}'] = {
-                'coefficient': results.beta.iloc[0],
+                'coefficient': results.params.iloc[0],
                 'std_error': results.std_errors.iloc[0],
                 't_statistic': results.tstats.iloc[0],
                 'p_value': results.pvalues.iloc[0],
