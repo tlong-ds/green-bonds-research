@@ -747,3 +747,83 @@ if __name__ == "__main__":
     print("\n" + "█"*80)
     print("All fixes ready. See ACTION_CHECKLIST.md for detailed next steps.")
     print("█"*80)
+
+def test_parallel_trends(df_panel, event_times, outcome, treatment_col='did', 
+                         controls=None, max_leads=5, max_lags=5):
+    """
+    Test parallel trends assumption using event study approach.
+    
+    Tests whether pre-treatment coefficients (leads) are zero.
+    If true, supports parallel trends assumption.
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        event_times: Series with event time relative to first treatment
+        outcome: Outcome variable name
+        treatment_col: Treatment variable name
+        controls: List of control variable names
+        max_leads: Years before event to include
+        max_lags: Years after event to include
+    
+    Returns:
+        dict: Results including pre-treatment p-value
+    """
+    import pandas as pd
+    import numpy as np
+    from scipy import stats as sp_stats
+    
+    df_reg = df_panel.copy()
+    df_reg['event_time'] = event_times
+    
+    # Create indicators for each relative time period
+    for t in range(-max_leads, max_lags + 1):
+        if t != 0:  # Omit t=0 as base category
+            df_reg[f'rel_time_{t}'] = (df_reg['event_time'] == t).astype(int)
+    
+    # Get relative time indicators
+    rel_time_cols = [f'rel_time_{t}' for t in range(-max_leads, max_lags + 1) if t != 0]
+    
+    # Build formula
+    formula_cols = ' + '.join(rel_time_cols)
+    if controls:
+        formula_cols += ' + ' + ' + '.join(controls)
+    formula = f"{outcome} ~ {formula_cols} + EntityEffects + TimeEffects"
+    
+    try:
+        from linearmodels.panel import PanelOLS
+        
+        # Prepare data
+        reg_data = df_reg[df_reg['event_time'].notna()].dropna(
+            subset=[outcome] + [c for c in controls if c] + rel_time_cols
+        )
+        
+        mod = PanelOLS.from_formula(formula, data=reg_data)
+        res = mod.fit(cov_type='clustered', cluster_entity=True)
+        
+        # Test pre-treatment (leads only)
+        pre_treat_cols = [f'rel_time_{t}' for t in range(-max_leads, 0)]
+        pre_treat_pvals = res.pvalues[pre_treat_cols]
+        
+        # Joint test of all pre-treatment coefficients
+        pre_treat_coefs = res.params[pre_treat_cols].values
+        pre_treat_cov = res.cov.loc[pre_treat_cols, pre_treat_cols]
+        
+        # F-test: H0: all pre-treatment coefs = 0
+        try:
+            inv_cov = np.linalg.inv(pre_treat_cov)
+            f_stat = pre_treat_coefs @ inv_cov @ pre_treat_coefs / len(pre_treat_cols)
+            p_val = 1 - sp_stats.f.cdf(f_stat, len(pre_treat_cols), len(reg_data) - len(res.params))
+        except:
+            p_val = np.nan
+        
+        return {
+            'pre_treatment_pvalues': pre_treat_pvals,
+            'joint_f_stat': f_stat if not np.isnan(f_stat) else None,
+            'joint_p_value': p_val,
+            'parallel_trends_holds': p_val > 0.10 if not np.isnan(p_val) else None,
+            'coefficients': res.params,
+            'results': res
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
