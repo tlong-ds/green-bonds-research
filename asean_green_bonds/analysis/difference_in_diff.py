@@ -359,9 +359,14 @@ def parallel_trends_test(
                     [treatment_col] + \
                     [f'treatment_lag_{i}' for i in range(1, lags+1)]
     
-    X = df_reg[lead_lag_cols].dropna()
-    y = df_reg.loc[X.index, outcome].dropna()
-    X = X[y.index]
+    # Prepare data with proper alignment
+    X = df_reg[lead_lag_cols]
+    y = df_reg[outcome]
+    
+    # Drop rows with missing values in either X or y
+    df_aligned = pd.concat([X, y], axis=1).dropna()
+    X = df_aligned[lead_lag_cols]
+    y = df_aligned[outcome]
     
     model = PanelOLS(y, X, entity_effects=True, time_effects=False)
     results = model.fit(cov_type='clustered', cluster_entity=True)
@@ -376,7 +381,7 @@ def parallel_trends_test(
     }
     
     for i, col in enumerate(lead_lag_cols):
-        pt_results['coefficients'][col] = results.beta.iloc[i]
+        pt_results['coefficients'][col] = results.params.iloc[i]
         pt_results['p_values'][col] = results.pvalues.iloc[i]
     
     return pt_results
