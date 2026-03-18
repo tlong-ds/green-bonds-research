@@ -306,9 +306,27 @@ def plot_parallel_trends(
     periods = []
     values = []
     
-    for key, val in sorted(coefs.items(), key=lambda x: (
-        -int(x[0].split('_')[2]) if 'lead' in x[0] else int(x[0].split('_')[2])
-    )):
+    def sort_key(item):
+        key = item[0]
+        if 'lead' in key:
+            # treatment_lead_X format
+            try:
+                lead_num = int(key.split('_')[2])
+                return (0, -lead_num)  # Leads first, in reverse order
+            except (IndexError, ValueError):
+                return (2, 0)  # Fallback for non-standard format
+        elif 'lag' in key:
+            # treatment_lag_X format
+            try:
+                lag_num = int(key.split('_')[2])
+                return (2, lag_num)  # Lags last, in order
+            except (IndexError, ValueError):
+                return (2, 0)  # Fallback
+        else:
+            # Current treatment (green_bond_active)
+            return (1, 0)  # Middle position
+    
+    for key, val in sorted(coefs.items(), key=sort_key):
         periods.append(key.replace('treatment_', ''))
         values.append(val)
     
