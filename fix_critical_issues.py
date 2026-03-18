@@ -827,3 +827,255 @@ def test_parallel_trends(df_panel, event_times, outcome, treatment_col='did',
     except Exception as e:
         return {'error': str(e)}
 
+def placebo_test(df_panel, treatment_col='did', outcomes=None, controls=None, 
+                 n_placebo=100, random_seed=42):
+    """
+    Placebo test: Assign random treatment to non-treated units.
+    
+    Tests whether effect of RANDOM treatment ≈ 0 (validates design).
+    If random assignment produces significant effects, design is biased.
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        treatment_col: Treatment variable name
+        outcomes: List of outcome variables
+        controls: List of control variables
+        n_placebo: Number of placebo assignments to test
+        random_seed: Random seed for reproducibility
+    
+    Returns:
+        dict: Placebo effect distribution statistics
+    """
+    import pandas as pd
+    import numpy as np
+    from scipy import stats as sp_stats
+    
+    if outcomes is None:
+        outcomes = ['return_on_assets', 'Tobin_Q', 'esg_score']
+    if controls is None:
+        controls = ['L1_Firm_Size', 'L1_Leverage']
+    
+    np.random.seed(random_seed)
+    placebo_results = {out: [] for out in outcomes}
+    
+    # Get treatment indicator
+    is_treated = df_panel[treatment_col].groupby(level='company').first() > 0
+    treated_firms = is_treated[is_treated].index.tolist()
+    
+    print(f"\nRunning {n_placebo} placebo tests...")
+    print(f"Actual treatment: {len(treated_firms)} firms")
+    
+    for rep in range(n_placebo):
+        # Assign random treatment to placebo firms
+        placebo_firms = np.random.choice(treated_firms, size=len(treated_firms), replace=False)
+        df_placebo = df_panel.copy()
+        
+        # Create placebo treatment
+        df_placebo['placebo_treat'] = 0
+        for firm in placebo_firms:
+            df_placebo.loc[firm, 'placebo_treat'] = 1
+        
+        # Run regression with placebo treatment
+        for outcome in outcomes:
+            try:
+                from linearmodels.panel import PanelOLS
+                
+                controls_str = ' + '.join(controls)
+                formula = f"{outcome} ~ placebo_treat + {controls_str} + EntityEffects"
+                
+                reg_data = df_placebo.dropna(subset=[outcome, 'placebo_treat'] + controls)
+                
+                if len(reg_data) > 100:
+                    mod = PanelOLS.from_formula(formula, data=reg_data)
+                    res = mod.fit(cov_type='clustered', cluster_entity=True, disp='off')
+                    
+                    # Store effect and p-value
+                    effect = res.params.get('placebo_treat', 0)
+                    p_val = res.pvalues.get('placebo_treat', 1.0)
+                    placebo_results[outcome].append({'effect': effect, 'p_value': p_val})
+            except:
+                pass
+        
+        if (rep + 1) % 25 == 0:
+            print(f"  Completed {rep + 1}/{n_placebo} placebo replications")
+    
+    # Summarize results
+    summary = {}
+    for outcome, results_list in placebo_results.items():
+        if results_list:
+            effects = [r['effect'] for r in results_list]
+            p_vals = [r['p_value'] for r in results_list]
+            summary[outcome] = {
+                'mean_effect': np.mean(effects),
+                'std_effect': np.std(effects),
+                'min_effect': np.min(effects),
+                'max_effect': np.max(effects),
+                'pct_significant': 100 * np.mean(np.array(p_vals) < 0.05),
+                'effects': effects,
+                'p_values': p_vals
+            }
+    
+    return summary
+
+
+def sensitivity_analysis_loocv(df_panel, treatment_col='did', outcome='return_on_assets', 
+                               controls=None, fe_type='EntityEffects'):
+    """
+    Leave-one-out-cross-validation (LOOCV) sensitivity analysis.
+    
+    Sequentially removes each treated firm, re-estimates DiD.
+    Checks if results driven by outlier.
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        treatment_col: Treatment variable name
+        outcome: Outcome variable
+        controls: List of control variables
+        fe_type: Type of fixed effects ('EntityEffects', 'TimeEffects', or 'None')
+    
+    Returns:
+        dict: Coefficient estimates dropping each treated firm
+    """
+    import pandas as pd
+    import numpy as np
+    
+    if controls is None:
+        controls = ['L1_Firm_Size', 'L1_Leverage']
+    
+    # Get treated firms
+    df_temp = df_panel.copy()
+    is_treated = df_temp[treatment_col].groupby(level='company').max() > 0
+    treated_firms = is_treated[is_treated].index.tolist()
+    
+    print(f"\nRunning LOOCV sensitivity analysis...")
+    print(f"Removing {len(treated_firms)} treated firms one at a time")
+    
+    results = []
+    
+    for i, drop_firm in enumerate(treated_firms):
+        # Remove one treated firm
+        df_loocv = df_panel[df_panel.index.get_level_values('company') != drop_firm].copy()
+        
+        try:
+            from linearmodels.panel import PanelOLS
+            
+            controls_str = ' + '.join(controls)
+            fe_str = f" + {fe_type}" if fe_type != 'None' else ""
+            formula = f"{outcome} ~ {treatment_col} + {controls_str}{fe_str}"
+            
+            reg_data = df_loocv.dropna(subset=[outcome, treatment_col] + controls)
+            
+            if len(reg_data) > 100:
+                mod = PanelOLS.from_formula(formula, data=reg_data)
+                res = mod.fit(cov_type='clustered', cluster_entity=True, disp='off')
+                
+                coef = res.params.get(treatment_col, np.nan)
+                se = res.std_errors.get(treatment_col, np.nan)
+                p_val = res.pvalues.get(treatment_col, np.nan)
+                
+                results.append({
+                    'dropped_firm': drop_firm,
+                    'coefficient': coef,
+                    'std_error': se,
+                    'p_value': p_val,
+                    'n_obs': len(reg_data)
+                })
+        except:
+            results.append({
+                'dropped_firm': drop_firm,
+                'coefficient': np.nan,
+                'std_error': np.nan,
+                'p_value': np.nan,
+                'n_obs': 0
+            })
+        
+        if (i + 1) % 5 == 0 or i == len(treated_firms) - 1:
+            print(f"  Completed {i + 1}/{len(treated_firms)} leave-one-out iterations")
+    
+    results_df = pd.DataFrame(results)
+    
+    # Summary statistics
+    valid_coefs = results_df['coefficient'].dropna()
+    print(f"\nLOOCV Summary (coefficient across {len(valid_coefs)} specifications):")
+    print(f"  Mean: {valid_coefs.mean():.6f}")
+    print(f"  Std Dev: {valid_coefs.std():.6f}")
+    print(f"  Min: {valid_coefs.min():.6f}")
+    print(f"  Max: {valid_coefs.max():.6f}")
+    print(f"  Range: {valid_coefs.max() - valid_coefs.min():.6f}")
+    
+    return results_df
+
+
+def specification_robustness_table(df_panel, treatment_col='did', outcomes=None, 
+                                   control_specs=None):
+    """
+    Test robustness across different control variable specifications.
+    
+    Args:
+        df_panel: Panel data indexed by (firm, year)
+        treatment_col: Treatment variable name
+        outcomes: List of outcomes to test
+        control_specs: List of control sets (each is a list of variables)
+    
+    Returns:
+        dict: Results across specifications
+    """
+    import pandas as pd
+    import numpy as np
+    
+    if outcomes is None:
+        outcomes = ['return_on_assets', 'Tobin_Q', 'esg_score']
+    
+    if control_specs is None:
+        control_specs = [
+            ['L1_Firm_Size'],
+            ['L1_Firm_Size', 'L1_Leverage'],
+            ['L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover'],
+            ['L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover', 'L1_Capital_Intensity']
+        ]
+    
+    results = []
+    
+    print(f"\nTesting {len(control_specs)} control variable specifications...")
+    
+    for spec_num, controls in enumerate(control_specs, 1):
+        spec_name = f"Spec {spec_num}: " + ", ".join(controls)
+        print(f"  {spec_name}")
+        
+        for outcome in outcomes:
+            try:
+                from linearmodels.panel import PanelOLS
+                
+                controls_str = ' + '.join(controls)
+                formula = f"{outcome} ~ {treatment_col} + {controls_str} + EntityEffects"
+                
+                reg_data = df_panel.dropna(subset=[outcome, treatment_col] + controls)
+                
+                if len(reg_data) > 100:
+                    mod = PanelOLS.from_formula(formula, data=reg_data)
+                    res = mod.fit(cov_type='clustered', cluster_entity=True, disp='off')
+                    
+                    coef = res.params.get(treatment_col, np.nan)
+                    se = res.std_errors.get(treatment_col, np.nan)
+                    p_val = res.pvalues.get(treatment_col, np.nan)
+                    
+                    results.append({
+                        'specification': spec_name,
+                        'outcome': outcome,
+                        'coefficient': coef,
+                        'std_error': se,
+                        'p_value': p_val,
+                        'n_controls': len(controls)
+                    })
+            except Exception as e:
+                results.append({
+                    'specification': spec_name,
+                    'outcome': outcome,
+                    'coefficient': np.nan,
+                    'std_error': np.nan,
+                    'p_value': np.nan,
+                    'n_controls': len(controls)
+                })
+    
+    return pd.DataFrame(results)
+
