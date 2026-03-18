@@ -75,6 +75,7 @@ Standalone validation utility that:
 ┌────────────────────▼────────────────────────────────────┐
 │ 2. Load Universe from green_bonds_authentic.csv         │
 │    Extract unique bond identifiers (DealPermId)         │
+│    ✓ CONVERT NUMERIC IDs TO STRINGS (LSEG requirement) │
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐

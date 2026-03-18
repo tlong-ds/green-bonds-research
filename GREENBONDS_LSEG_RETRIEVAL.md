@@ -4,10 +4,18 @@
 
 `greenbonds.py` is a refactored script that retrieves comprehensive green bond data from the LSEG (Refinitiv) database using the Desktop API. It implements batched field retrieval to avoid API overload errors and consolidates results into a single CSV file.
 
+## Key Fix: String Conversion for Universe IDs
+
+⚠️ **Important**: The script automatically converts all bond identifiers (DealPermId values) to strings before querying LSEG. This is because:
+- Numeric DealPermId values (e.g., `154084480389`) must be converted to strings
+- LSEG API requires all universe identifiers to be string type
+- Automatic conversion prevents "Not all elements are strings" errors
+
 ## Features
 
 ✓ **Batched retrieval** - Splits 43 fields into 6 logical batches (10-15 fields each)  
 ✓ **Automatic universe loading** - Extracts bond identifiers from existing data  
+✓ **String ID conversion** - Automatically converts numeric IDs to strings for LSEG API  
 ✓ **Error handling** - Gracefully handles API errors and continues with remaining batches  
 ✓ **Time delays** - 1.5-second delays between batch requests to prevent server overload  
 ✓ **Consolidation** - Merges multiple batch results into single DataFrame  

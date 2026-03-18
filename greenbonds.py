@@ -27,6 +27,9 @@ try:
     else:
         # Fallback: use first available identifier column
         universe = existing_df.iloc[:, 0].unique().tolist()
+    
+    # Convert all identifiers to strings (LSEG API requires strings)
+    universe = [str(uid) for uid in universe]
     print(f"✓ Loaded {len(universe)} bond identifiers")
 except FileNotFoundError:
     print("✗ green_bonds_authentic.csv not found. Using example identifiers.")
