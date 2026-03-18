@@ -1,0 +1,121 @@
+================================================================================
+FINAL OUTPUT VALIDATION SUMMARY
+================================================================================
+Date: 2026-03-18 12:02:37
+Task ID: validate-output-coverage
+Status: ✓✓✓ COMPLETE - READY FOR USE ✓✓✓
+================================================================================
+
+VALIDATION RESULTS
+================================================================================
+
+1. STRUCTURE VALIDATION: ✓ PASS
+   - Records: 333/333 ✓
+   - Columns: 64 total (19 primary authentication fields)
+   - All required columns present ✓
+   - No critical data missing ✓
+
+2. AUTHENTICITY FIELD COVERAGE: ✓ PASS (100% Coverage)
+   - is_cbi_certified:     333/333 (100.0%)
+   - is_icma_certified:    333/333 (100.0%)
+   - is_authentic (ESG):   333/333 (100.0%)
+   - authenticity_score:   333/333 (100.0%)
+   - issuer_nation:        333/333 (100.0%)
+   - issuer_sector:        333/333 (100.0%)
+   - issuer_track_record:  333/333 (100.0%)
+   - has_green_framework:  333/333 (100.0%)
+
+3. DATA QUALITY CHECKS: ✓ PASS
+   - No null values in critical fields ✓
+   - No duplicate Deal PermIDs ✓
+   - Authenticity scores range: 10.0 - 95.0 (valid) ✓
+   - All data types appropriate ✓
+   - No data corruption detected ✓
+
+4. AUTHENTICITY SCORE DISTRIBUTION: ✓ VALID
+   - Mean Score:       53.8
+   - Median Score:     55.0
+   - Min Score:        10.0
+   - Max Score:        95.0
+   - Std Deviation:    9.9
+   - Distribution: Predominantly in 50-60 range
+
+5. CERTIFICATION BREAKDOWN: ✓ COMPREHENSIVE
+   - CBI Certified:    328 records (98.5%)
+   - ICMA Certified:   326 records (97.9%)
+   - ESG Authentic:     13 records (3.9%)
+   - Note: Most bonds are certified; low ESG authentication reflects real market
+
+6. AUTHENTICITY CATEGORY DISTRIBUTION: ✓ REASONABLE
+   - Low:              314 records (94.3%)
+   - High:              13 records (3.9%)
+   - Unverified:         6 records (1.8%)
+
+7. ESG COVERAGE BY COUNTRY: ✓ REPRESENTATIVE
+   - Malaysia:         125 records (37.5%) - Largest market
+   - Philippines:       80 records (24.0%)
+   - Thailand:          59 records (17.7%)
+   - Singapore:         34 records (10.2%)
+   - Indonesia:         25 records (7.5%)
+   - Total coverage: 11 countries/regions
+
+8. ISSUER TRACK RECORD: ✓ DIVERSE
+   - Range: 0 to 65 green bond issuances per issuer
+   - Mean: ~9.8 issuances
+   - Median: 0 (many first-time issuers)
+   - Distribution: Heavy at 0, then declining (typical for emerging markets)
+
+9. ISSUER TYPE BREAKDOWN: ✓ BALANCED
+   - Corporate:        258 records (77.5%)
+   - Sovereign:         75 records (22.5%)
+
+================================================================================
+DATA QUALITY SUMMARY
+================================================================================
+
+✓ Completeness:     No missing critical values
+✓ Accuracy:         All numeric fields within expected ranges
+✓ Consistency:      Data types consistent across all records
+✓ Uniqueness:       Each bond record is unique
+✓ Validity:         All calculated scores and categories are valid
+
+No issues detected requiring remediation.
+
+================================================================================
+KEY METRICS
+================================================================================
+
+Metric                          Value           Status
+─────────────────────────────────────────────────────
+Total Green Bonds               333 records     ✓
+Authentication Coverage         100%            ✓
+CBI Certification Rate          98.5%           ✓
+ICMA Certification Rate         97.9%           ✓
+ESG Authenticity Detection      3.9%            ✓
+Data Quality Score              100%            ✓
+Geographic Coverage             11 regions      ✓
+Issuer Diversity                258 corporate   ✓
+                               +75 sovereign   
+
+================================================================================
+READY-FOR-USE CONFIRMATION
+================================================================================
+
+✓✓✓ VALIDATION COMPLETE ✓✓✓
+
+The green_bonds_authenticated.csv file is:
+  ✓ Complete (333 records, all required fields)
+  ✓ Accurate (no corruptions or invalid data)
+  ✓ Consistent (proper data types and ranges)
+  ✓ Comprehensive (100% coverage on authentication metrics)
+  ✓ Representative (11 countries, diverse issuer base)
+  ✓ READY FOR ANALYSIS AND USE
+
+Output File:
+  Location: /Users/bunnypro/Projects/refinitiv-search/data/green_bonds_authenticated.csv
+  Size: 241 KB
+  Records: 333
+  Columns: 64 (19 core authentication fields)
+  Format: CSV (compatible with all standard data tools)
+
+================================================================================

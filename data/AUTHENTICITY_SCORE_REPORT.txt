@@ -1,0 +1,121 @@
+==========================================================================================
+                   COMPOSITE AUTHENTICITY SCORE - COMPREHENSIVE REPORT                    
+==========================================================================================
+
+EXECUTIVE SUMMARY
+------------------------------------------------------------------------------------------
+Total Green Bonds Analyzed:     333
+Date Range:                    2015-2025 (ASEAN Market)
+Methodology:                   Weighted composite of 3 verification pillars
+
+Score Distribution:
+  • HIGH AUTHENTICITY (80-100):       13 bonds (  3.9%)
+  • MEDIUM AUTHENTICITY (60-79):       0 bonds (  0.0%)
+  • LOW AUTHENTICITY (40-59):        314 bonds ( 94.3%)
+  • UNVERIFIED/UNCERTAIN (<40):        6 bonds (  1.8%)
+
+SCORE STATISTICS
+------------------------------------------------------------------------------------------
+Mean Score:                     53.81
+Median Score:                   55.00
+Standard Deviation:              9.90
+Score Range:                   10 to 95
+25th Percentile:                55.00
+75th Percentile:                55.00
+
+VERIFICATION COMPONENT ANALYSIS
+------------------------------------------------------------------------------------------
+
+ESG Divergence (40% weight):
+  Bonds with points:   13/333 (  3.9%)
+  Average points:       1.53/40
+  Mean contribution:    1.53% of final score
+
+Certifications (35% weight):
+  Bonds with points:  328/333 ( 98.5%)
+  Average points:      29.46/30
+  Mean contribution:   29.46% of final score
+
+Issuer Verification (25% weight):
+  Bonds with points:  333/333 (100.0%)
+  Average points:      22.82/25
+  Mean contribution:   22.82% of final score
+
+VERIFICATION FLAG SUMMARY
+------------------------------------------------------------------------------------------
+CBI Certified:                 328/333 ( 98.5%)
+ICMA Certified:                326/333 ( 97.9%)
+ESG Authentic (divergence):     13/333 (  3.9%)
+Has Green Framework:           328/333 ( 98.5%)
+Issuer Track Record:           263/333 ( 79.0%)
+
+TOP 15 MOST AUTHENTIC BONDS
+------------------------------------------------------------------------------------------
+Rank  Issuer                                    Score Category     Breakdown (ESG|Cert|Issuer)   
+------------------------------------------------------------------------------------------
+1     Bts Group Holdings PCL                     95.0 High                               40|30|25
+2     Bts Group Holdings PCL                     95.0 High                               40|30|25
+3     Bts Group Holdings PCL                     95.0 High                               40|30|25
+4     Bts Group Holdings PCL                     95.0 High                               40|30|25
+5     Bts Group Holdings PCL                     95.0 High                               40|30|25
+6     Bts Group Holdings PCL                     95.0 High                               40|30|25
+7     Bts Group Holdings PCL                     95.0 High                               40|30|25
+8     Bts Group Holdings PCL                     95.0 High                               40|30|25
+9     Bts Group Holdings PCL                     95.0 High                               40|30|25
+10    PTT PCL                                    90.0 High                               35|30|25
+11    Bts Group Holdings PCL                     85.0 High                               40|30|15
+12    Energy Absolute PCL                        85.0 High                               40|30|15
+13    PTT PCL                                    80.0 High                               35|30|15
+14    Asian Development Bank                     55.0 Low                                 0|30|25
+15    Asian Development Bank                     55.0 Low                                 0|30|25
+
+BOTTOM 15 LEAST AUTHENTIC BONDS
+------------------------------------------------------------------------------------------
+Rank  Issuer                                    Score Category     Breakdown (ESG|Cert|Issuer)   
+------------------------------------------------------------------------------------------
+1     Ssms Plantation Holdings Pte Ltd           10.0 Unverified                           0|0|10
+2     Cenviro Sdn Bhd                            10.0 Unverified                           0|0|10
+3     Asian Development Bank                     20.0 Unverified                           0|0|20
+4     Asian Development Bank                     20.0 Unverified                           0|0|20
+5     Asian Development Bank                     20.0 Unverified                           0|0|20
+6     Asian Development Bank                     30.0 Unverified                          0|15|15
+7     Asian Development Bank                     40.0 Low                                 0|15|25
+8     Greenko Investment Co                      45.0 Low                                 0|30|15
+9     Ap Renewables Inc                          45.0 Low                                 0|30|15
+10    CDL Properties Ltd                         45.0 Low                                 0|30|15
+11    DBS Group Holdings Ltd                     45.0 Low                                 0|30|15
+12    Pnb Merdeka Ventures Sdn Bhd               45.0 Low                                 0|30|15
+13    Segi Astana Sdn Bhd                        45.0 Low                                 0|30|15
+14    Perusahaan Penerbit SBSN Indonesia III     45.0 Low                                 0|30|15
+15    Tlff I Pte Ltd                             45.0 Low                                 0|30|15
+
+SCORING METHODOLOGY
+------------------------------------------------------------------------------------------
+
+ESG Divergence Component (0-40 points, 40% weight):
+  • Base score: is_authentic flag = +30 points
+  • Bonus: esg_improvement > 10 = +5 points
+  • Bonus: esg_pvalue < 0.05 (statistically significant) = +5 points
+
+Certification Component (0-35 points, 35% weight):
+  • CBI Certification = +15 points
+  • ICMA Certification = +15 points
+  • Bonus: ICMA confidence > 0.9 = +5 points
+
+Issuer Verification Component (0-25 points, 25% weight):
+  • Issuer verified (nation match in ESG/market data) = +10 points
+  • Issuer track record > 0 = +10 points
+  • Has green framework = +5 points
+
+Final Score: Sum of all components (0-100 scale)
+
+CATEGORY BREAKDOWN
+------------------------------------------------------------------------------------------
+Category              Count   Percentage    Avg Score Score Range    
+------------------------------------------------------------------------------------------
+High Authenticity        13         3.9%         91.9 80-100         
+Medium Authenticity       0         0.0%          0.0 60-79          
+Low Authenticity        314        94.3%         52.9 40-59          
+Unverified                6         1.8%         18.3 0-39           
+
+==========================================================================================
