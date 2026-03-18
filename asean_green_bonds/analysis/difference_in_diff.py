@@ -107,13 +107,29 @@ def estimate_did(
     regressors = [treatment_col] + control_vars
     regressors = [r for r in regressors if r in df_reg.columns]
     
-    X = df_reg[regressors].dropna()
-    y = df_reg.loc[X.index, outcome]
+    # Check if treatment variable exists in regressors
+    if treatment_col not in regressors:
+        return {
+            'error': f"Treatment variable '{treatment_col}' not found in data columns",
+            'outcome': outcome,
+            'specification': specification,
+            'n_obs': 0,
+        }
     
-    # Drop missing outcomes
-    valid_idx = y.notna()
-    X = X[valid_idx]
-    y = y[valid_idx]
+    # Drop missing values in regressors and outcome simultaneously
+    df_clean = df_reg[[*regressors, outcome]].dropna()
+    
+    # Check minimum sample size
+    if len(df_clean) < 10:
+        return {
+            'error': f"Insufficient observations after removing NaNs: {len(df_clean)}",
+            'outcome': outcome,
+            'specification': specification,
+            'n_obs': len(df_clean),
+        }
+    
+    X = df_clean[regressors]
+    y = df_clean[outcome]
     
     # Fit model based on specification
     cov_type = 'clustered' if cluster_entity else 'robust'
@@ -126,9 +142,9 @@ def estimate_did(
     elif specification == 'twoway_fe':
         model = PanelOLS(y, X, entity_effects=True, time_effects=True)
     else:  # 'none'
-        # Add time dummies manually
-        time_dummies = pd.get_dummies(df_reg.index.get_level_values(time_col), drop_first=True)
-        time_dummies.index = df_reg.index
+        # Add time dummies manually - using indices from cleaned data
+        time_dummies = pd.get_dummies(y.index.get_level_values(time_col), drop_first=True)
+        time_dummies.index = y.index
         X = X.join(time_dummies)
         model = PanelOLS(y, X, entity_effects=False, time_effects=False)
     
