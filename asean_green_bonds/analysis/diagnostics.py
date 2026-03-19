@@ -6,11 +6,11 @@ Tests for assumption violations and robustness of econometric results.
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional, List, Dict
-from sklearn.model_selection import LeaveOneOut
+from typing import Tuple, Optional, List, Dict, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='linearmodels')
 
 
 def placebo_test(
@@ -20,7 +20,7 @@ def placebo_test(
     entity_col: str = 'ric',
     time_col: str = 'Year',
     placebo_shift: int = 1,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Placebo test: Shift treatment timing and re-estimate (should have zero effect).
     
@@ -98,7 +98,7 @@ def leave_one_out_cv(
     treatment_col: str = 'green_bond_active',
     entity_col: str = 'ric',
     time_col: str = 'Year',
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Leave-one-out cross-validation for DiD robustness.
     
@@ -153,18 +153,24 @@ def leave_one_out_cv(
             model = PanelOLS(y, X, entity_effects=True, time_effects=False)
             results = model.fit(cov_type='clustered', cluster_entity=True)
             coefficients.append(results.params.iloc[0])
-        except:
-            pass
+        except (ValueError, np.linalg.LinAlgError) as e:
+            # Skip this fold if estimation fails (singular matrix, insufficient data, etc.)
+            warnings.warn(f"LOOCV fold estimation failed: {e}")
+            continue
     
     if len(coefficients) > 1:
+        mean_coef = np.mean(coefficients)
+        std_coef = np.std(coefficients)
+        # Robust if coefficient variation is low relative to mean (handle negative coefficients)
+        robust = std_coef < abs(mean_coef) * 0.5 if mean_coef != 0 else std_coef < 0.1
         return {
             'test_name': 'leave_one_out_cv',
             'n_folds': len(coefficients),
-            'mean_coefficient': np.mean(coefficients),
-            'std_coefficient': np.std(coefficients),
+            'mean_coefficient': mean_coef,
+            'std_coefficient': std_coef,
             'min_coefficient': np.min(coefficients),
             'max_coefficient': np.max(coefficients),
-            'robust': np.std(coefficients) < np.mean(coefficients) * 0.5,
+            'robust': robust,
         }
     else:
         return {'test_name': 'leave_one_out_cv', 'error': 'Failed to complete folds'}
@@ -224,28 +230,34 @@ def specification_sensitivity(
         X = df_reg[regressors]
         y = df_reg[outcome]
         
+        result_row = {
+            'specification': f'Spec_{spec_num+1}',
+            'n_controls': len(controls),
+            'controls': ', '.join(controls) if controls else 'None',
+            'coefficient': None,
+            'std_error': None,
+            't_statistic': None,
+            'p_value': None,
+            'r2_within': None,
+            'n_obs': len(y),
+            'error': None,
+        }
+        
         try:
             model = PanelOLS(y, X, entity_effects=True, time_effects=False)
             est = model.fit(cov_type='clustered', cluster_entity=True)
             
-            results.append({
-                'specification': f'Spec_{spec_num+1}',
-                'n_controls': len(controls),
-                'controls': ', '.join(controls) if controls else 'None',
+            result_row.update({
                 'coefficient': est.params.iloc[0],
                 'std_error': est.std_errors.iloc[0],
                 't_statistic': est.tstats.iloc[0],
                 'p_value': est.pvalues.iloc[0],
                 'r2_within': est.rsquared_within,
-                'n_obs': len(y),
             })
         except Exception as e:
-            results.append({
-                'specification': f'Spec_{spec_num+1}',
-                'n_controls': len(controls),
-                'controls': ', '.join(controls) if controls else 'None',
-                'error': str(e),
-            })
+            result_row['error'] = str(e)
+        
+        results.append(result_row)
     
     return pd.DataFrame(results)
 
@@ -257,7 +269,7 @@ def heterogeneous_effects_analysis(
     entity_col: str = 'ric',
     time_col: str = 'Year',
     heterogeneity_var: str = 'is_certified',
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Analyze treatment effect heterogeneity by subgroup.
     
@@ -326,7 +338,7 @@ def run_diagnostics_battery(
     treatment_col: str = 'green_bond_active',
     entity_col: str = 'ric',
     time_col: str = 'Year',
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Run comprehensive diagnostics on DiD model.
     

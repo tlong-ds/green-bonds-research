@@ -8,10 +8,11 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict, List, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings, not all
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
 
 
 def estimate_propensity_scores(
@@ -76,7 +77,7 @@ def check_common_support(
     ps_col: str = 'propensity_score',
     treatment_col: str = 'green_bond_issue',
     plot: bool = False,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Verify common support assumption (overlap of propensity score distributions).
     
@@ -140,7 +141,7 @@ def nearest_neighbor_matching(
     caliper: float = 0.1,
     ratio: int = 1,
     replacement: bool = False,
-) -> Tuple[pd.DataFrame, Dict[str, any]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Perform 1-to-k nearest neighbor matching with caliper.
     
@@ -296,7 +297,7 @@ def create_matched_dataset(
     caliper: float = 0.1,
     ratio: int = 4,
     check_support: bool = True,
-) -> Tuple[pd.DataFrame, Dict[str, any]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Create propensity-score matched dataset for DiD analysis.
     

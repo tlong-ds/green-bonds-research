@@ -7,10 +7,11 @@ Helper functions for statistical analysis and hypothesis testing.
 import pandas as pd
 import numpy as np
 from scipy import stats as sp_stats
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict, List, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def calculate_effect_size(

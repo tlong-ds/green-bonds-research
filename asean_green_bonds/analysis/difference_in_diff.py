@@ -7,10 +7,11 @@ Implements DiD regression with fixed effects and clustered standard errors.
 import pandas as pd
 import numpy as np
 from linearmodels.panel import PanelOLS, FirstDifferenceOLS
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, List, Dict, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='linearmodels')
 
 
 def prepare_panel_for_regression(
@@ -61,7 +62,7 @@ def estimate_did(
     control_vars: Optional[List[str]] = None,
     specification: str = 'entity_fe',
     cluster_entity: bool = True,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Estimate difference-in-differences treatment effect.
     
@@ -103,9 +104,21 @@ def estimate_did(
     # Prepare data
     df_reg = prepare_panel_for_regression(df, entity_col, time_col, set_index=True)
     
-    # Build regressor list
+    # Build regressor list, filtering out variables not in data
     regressors = [treatment_col] + control_vars
     regressors = [r for r in regressors if r in df_reg.columns]
+    
+    # Remove control variables with zero variance
+    regressors_with_variance = [treatment_col]  # Always keep treatment
+    for var in regressors:
+        if var == treatment_col:
+            continue
+        if var in df_reg.columns:
+            var_std = df_reg[var].std()
+            if var_std > 1e-10:  # Has some variance
+                regressors_with_variance.append(var)
+    
+    regressors = regressors_with_variance
     
     # Check if treatment variable exists in regressors
     if treatment_col not in regressors:
@@ -114,6 +127,16 @@ def estimate_did(
             'outcome': outcome,
             'specification': specification,
             'n_obs': 0,
+        }
+    
+    # Check if outcome variable exists
+    if outcome not in df_reg.columns:
+        return {
+            'error': f"Outcome variable '{outcome}' not found in data columns",
+            'outcome': outcome,
+            'specification': specification,
+            'n_obs': 0,
+            'available_columns': list(df_reg.columns[:20]),  # Show first 20 columns for debugging
         }
     
     # Drop missing values in regressors and outcome simultaneously
@@ -131,23 +154,87 @@ def estimate_did(
     X = df_clean[regressors]
     y = df_clean[outcome]
     
+    # Check for and remove collinear variables using VIF and correlation
+    def remove_collinear_features(X, threshold=0.90, keep_col=None):
+        """
+        Remove highly correlated features, preserving keep_col.
+        Uses pairwise correlation to detect and remove collinear features.
+        """
+        X_numeric = X.select_dtypes(include=[np.number])
+        
+        if len(X_numeric.columns) <= 1:
+            return X, []
+        
+        corr_matrix = X_numeric.corr().abs()
+        
+        # Find pairs of highly correlated features
+        to_drop = set()
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                col_i = corr_matrix.columns[i]
+                col_j = corr_matrix.columns[j]
+                
+                if corr_matrix.iloc[i, j] > threshold:
+                    # Drop the second one unless it's the keep_col
+                    if keep_col and col_i == keep_col:
+                        to_drop.add(col_j)
+                    elif keep_col and col_j == keep_col:
+                        to_drop.add(col_i)
+                    else:
+                        # Drop the one with higher average correlation
+                        avg_corr_i = corr_matrix[col_i].mean()
+                        avg_corr_j = corr_matrix[col_j].mean()
+                        if avg_corr_i > avg_corr_j:
+                            to_drop.add(col_i)
+                        else:
+                            to_drop.add(col_j)
+        
+        to_drop = list(to_drop)
+        return X.drop(columns=to_drop), to_drop
+    
+    # Remove collinear features but keep treatment variable  
+    X_clean, dropped_cols = remove_collinear_features(X, threshold=0.90, keep_col=treatment_col)
+    
+    if dropped_cols:
+        regressors = [r for r in regressors if r not in dropped_cols]
+        X = X_clean
+    
+    # Additional check: ensure treatment variable has variation
+    if treatment_col in X.columns:
+        treatment_var = X[treatment_col].var()
+        if treatment_var == 0 or np.isnan(treatment_var):
+            return {
+                'error': f"Treatment variable '{treatment_col}' has no variation",
+                'outcome': outcome,
+                'specification': specification,
+                'n_obs': len(y),
+            }
+    
     # Fit model based on specification
     cov_type = 'clustered' if cluster_entity else 'robust'
     cov_kwargs = {'cluster_entity': True} if cluster_entity else {}
     
-    if specification == 'entity_fe':
-        model = PanelOLS(y, X, entity_effects=True, time_effects=False)
-    elif specification == 'time_fe':
-        model = PanelOLS(y, X, entity_effects=False, time_effects=True)
-    elif specification == 'twoway_fe':
-        model = PanelOLS(y, X, entity_effects=True, time_effects=True)
-    else:  # 'none'
-        # Add time dummies manually - using indices from cleaned data
-        time_dummies = pd.get_dummies(y.index.get_level_values(time_col), drop_first=True)
-        time_dummies.index = y.index
-        # Use concat instead of join to avoid cartesian product with non-unique indices
-        X = pd.concat([X, time_dummies], axis=1)
-        model = PanelOLS(y, X, entity_effects=False, time_effects=False)
+    try:
+        if specification == 'entity_fe':
+            model = PanelOLS(y, X, entity_effects=True, time_effects=False, check_rank=False)
+        elif specification == 'time_fe':
+            model = PanelOLS(y, X, entity_effects=False, time_effects=True, check_rank=False)
+        elif specification == 'twoway_fe':
+            model = PanelOLS(y, X, entity_effects=True, time_effects=True, check_rank=False)
+        else:  # 'none'
+            # Add time dummies manually - using indices from cleaned data
+            time_dummies = pd.get_dummies(y.index.get_level_values(time_col), drop_first=True)
+            time_dummies.index = y.index
+            # Use concat instead of join to avoid cartesian product with non-unique indices
+            X = pd.concat([X, time_dummies], axis=1)
+            model = PanelOLS(y, X, entity_effects=False, time_effects=False, check_rank=False)
+    except Exception as e:
+        return {
+            'error': f"Model creation failed: {str(e)}",
+            'outcome': outcome,
+            'specification': specification,
+            'n_obs': len(y),
+        }
     
     # Estimate
     try:
@@ -191,6 +278,7 @@ def estimate_did(
         'confidence_interval': (coef - 1.96*se, coef + 1.96*se),
         'significant_5pct': abs(t_stat) > 1.96,
         'significant_10pct': abs(t_stat) > 1.645,
+        'dropped_collinear_vars': dropped_cols if dropped_cols else [],
     }
 
 
@@ -232,6 +320,7 @@ def run_multiple_outcomes(
         specifications = ['entity_fe', 'time_fe', 'twoway_fe', 'none']
     
     results = []
+    errors = []
     
     for outcome in outcomes:
         for spec in specifications:
@@ -242,6 +331,21 @@ def run_multiple_outcomes(
             
             if 'error' not in result:
                 results.append(result)
+            else:
+                # Collect errors for reporting
+                errors.append({
+                    'outcome': outcome,
+                    'specification': spec,
+                    'error': result['error']
+                })
+    
+    # Print errors if any
+    if errors:
+        print(f"\n⚠️  Warning: {len(errors)} model(s) failed to estimate:")
+        for err in errors[:5]:  # Show first 5 errors
+            print(f"  - {err['outcome']} ({err['specification']}): {err['error']}")
+        if len(errors) > 5:
+            print(f"  ... and {len(errors) - 5} more errors")
     
     return pd.DataFrame(results)
 
@@ -315,7 +419,7 @@ def parallel_trends_test(
     time_col: str = 'Year',
     leads: int = 3,
     lags: int = 3,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Test parallel trends assumption via leads/lags analysis.
     

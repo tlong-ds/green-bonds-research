@@ -6,17 +6,18 @@ Functions for checking data quality and assumption violations.
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, List, Dict, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def validate_panel_structure(
     df: pd.DataFrame,
     entity_col: str = 'ric',
     time_col: str = 'Year',
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Validate panel data structure and report irregularities.
     
@@ -52,7 +53,7 @@ def validate_panel_structure(
 def check_missing_data(
     df: pd.DataFrame,
     threshold: float = 0.5,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Check for missing data patterns.
     
@@ -135,7 +136,7 @@ def validate_treatment_variation(
     treatment_col: str = 'green_bond_issue',
     entity_col: str = 'ric',
     time_col: str = 'Year',
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Validate treatment variation for DiD identification.
     
@@ -185,7 +186,7 @@ def check_parallel_trends_assumption(
     entity_col: str = 'ric',
     time_col: str = 'Year',
     pre_treatment_periods: int = 3,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Preliminary check of parallel trends assumption.
     
@@ -272,7 +273,7 @@ def check_parallel_trends_assumption(
 def validate_regression_assumptions(
     residuals: pd.Series,
     x_variable: pd.Series,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Test classical linear regression assumptions on residuals.
     

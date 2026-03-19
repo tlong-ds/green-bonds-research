@@ -7,11 +7,12 @@ Functions for cleaning, merging, and engineering features from raw data.
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Any
 from scipy.stats.mstats import winsorize
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def merge_panel_data(
@@ -194,6 +195,7 @@ def filter_asean_firms_and_years(
 
 def handle_missing_values(
     df: pd.DataFrame,
+    firm_col: str = 'ticker',
     forward_fill_cols: Optional[list] = None,
     min_years_per_firm: int = 3,
 ) -> pd.DataFrame:
@@ -203,7 +205,9 @@ def handle_missing_values(
     Parameters
     ----------
     df : pd.DataFrame
-        Panel data with 'ric'.
+        Panel data with firm identifier column.
+    firm_col : str, optional
+        Name of firm identifier column (default: 'ticker'). Can be 'ric' or 'ticker'.
     forward_fill_cols : list, optional
         Columns to forward fill. If None, uses financial variables.
     min_years_per_firm : int, optional
@@ -220,15 +224,17 @@ def handle_missing_values(
             'market_capitalization', 'employees'
         ]
     
-    # Forward fill financial variables
+    df = df.copy()
+    
+    # Forward fill financial variables (using pandas 2.0+ compatible syntax)
     for col in forward_fill_cols:
         if col in df.columns:
-            df[col] = df.groupby('ric')[col].fillna(method='ffill')
+            df[col] = df.groupby(firm_col)[col].transform(lambda x: x.ffill())
     
     # Drop firms with insufficient data
-    firm_years = df.groupby('ric').size()
+    firm_years = df.groupby(firm_col).size()
     valid_firms = firm_years[firm_years >= min_years_per_firm].index
-    df = df[df['ric'].isin(valid_firms)].copy()
+    df = df[df[firm_col].isin(valid_firms)].copy()
     
     return df
 
@@ -325,6 +331,12 @@ def winsorize_outliers(
     -------
     pd.DataFrame
         Data with outliers winsorized.
+        
+    Notes
+    -----
+    Uses scipy.stats.mstats.winsorize with limits parameter.
+    limits=(lower_frac, upper_frac) where lower_frac + upper_frac <= 1
+    For 1st/99th percentiles, use limits=(0.01, 0.01) not (0.01, 0.99)!
     """
     if exclude_cols is None:
         exclude_cols = [
@@ -335,6 +347,11 @@ def winsorize_outliers(
     df = df.copy()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     
+    # Convert percentiles to limits for scipy winsorize
+    # limits expects (fraction_to_trim_from_bottom, fraction_to_trim_from_top)
+    lower_limit = lower
+    upper_limit = 1.0 - upper  # Convert 0.99 percentile to 0.01 trim from top
+    
     for col in numeric_cols:
         if col in exclude_cols:
             continue
@@ -342,8 +359,10 @@ def winsorize_outliers(
         if df[col].notna().sum() > 0:
             # Preserve NaN positions by creating a mask and applying winsorize only to non-NaN values
             mask = df[col].notna()
-            winsorized_values = winsorize(df[col][mask], limits=(lower, upper))
-            df.loc[mask, col] = winsorized_values
+            # Use proper limits: (trim_from_bottom, trim_from_top)
+            winsorized_values = winsorize(df[col][mask], limits=(lower_limit, upper_limit))
+            # Convert masked array to regular array to avoid issues
+            df.loc[mask, col] = np.asarray(winsorized_values)
     
     return df
 
@@ -437,5 +456,118 @@ def encode_categorical_features(df: pd.DataFrame) -> pd.DataFrame:
         df['environmental_investment'] = df['environmental_investment'].map(
             {'Y': 1, 'N': 0}
         )
+    
+    return df
+
+
+def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create financial ratio variables from raw metrics.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data with raw financial metrics.
+        
+    Returns
+    -------
+    pd.DataFrame
+        Data with computed financial ratios.
+        
+    Notes
+    -----
+    - Firm_Size = ln(total_assets)
+    - Leverage = total_debt / total_assets
+    - Asset_Turnover = net_sales_or_revenues / total_assets
+    - Capital_Intensity = total_assets / net_sales_or_revenues
+    - Cash_Ratio = cash / current_liabilities_total
+    """
+    df = df.copy()
+    
+    # Firm Size: log of total assets
+    df['Firm_Size'] = np.where(
+        (df['total_assets'] > 0) & (df['total_assets'].notna()),
+        np.log(df['total_assets']),
+        np.nan
+    )
+    
+    # Leverage: total debt / total assets
+    df['Leverage'] = np.where(
+        (df['total_assets'] > 0) & (df['total_assets'].notna()) & (df['total_debt'].notna()),
+        df['total_debt'] / df['total_assets'],
+        np.nan
+    )
+    
+    # Asset Turnover: net sales / total assets
+    df['Asset_Turnover'] = np.where(
+        (df['total_assets'] > 0) & (df['total_assets'].notna()) & (df['net_sales_or_revenues'].notna()),
+        df['net_sales_or_revenues'] / df['total_assets'],
+        np.nan
+    )
+    
+    # Capital Intensity: total assets / net sales
+    df['Capital_Intensity'] = np.where(
+        (df['net_sales_or_revenues'] > 0) & (df['net_sales_or_revenues'].notna()) & (df['total_assets'].notna()),
+        df['total_assets'] / df['net_sales_or_revenues'],
+        np.nan
+    )
+    
+    # Cash Ratio: cash / current liabilities
+    df['Cash_Ratio'] = np.where(
+        (df['current_liabilities_total'] > 0) & (df['current_liabilities_total'].notna()) & (df['cash'].notna()),
+        df['cash'] / df['current_liabilities_total'],
+        np.nan
+    )
+    
+    return df
+
+
+def create_lagged_features(
+    df: pd.DataFrame,
+    firm_col: str = 'ticker',
+    vars_to_lag: Optional[list] = None,
+    lags: Optional[list] = None,
+) -> pd.DataFrame:
+    """
+    Create lagged features by firm-year.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data with firm identifier and 'Year' columns, sorted by firm and year.
+    firm_col : str, optional
+        Name of firm identifier column (default: 'ticker'). Can be 'ric' or 'ticker'.
+    vars_to_lag : list, optional
+        Variables to lag. If None, lags key financial ratios and outcomes.
+    lags : list, optional
+        Lag periods (default: [1]).
+        
+    Returns
+    -------
+    pd.DataFrame
+        Data with lagged variables added as L{n}_{var}.
+        
+    Notes
+    -----
+    - Lagging is done within firm to avoid cross-firm contamination
+    - Lags within the same firm-year sequence are created
+    """
+    if vars_to_lag is None:
+        vars_to_lag = [
+            'Firm_Size', 'Leverage', 'Asset_Turnover', 'Capital_Intensity',
+            'return_on_assets', 'Tobin_Q', 'esg_score'
+        ]
+    
+    if lags is None:
+        lags = [1]
+    
+    df = df.copy()
+    df = df.sort_values(by=[firm_col, 'Year']).reset_index(drop=True)
+    
+    for var in vars_to_lag:
+        if var in df.columns:
+            for lag in lags:
+                lagged_col = f"L{lag}_{var}"
+                df[lagged_col] = df.groupby(firm_col)[var].shift(lag)
     
     return df

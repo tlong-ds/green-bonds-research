@@ -7,7 +7,7 @@ Functions for loading raw data files and managing data sources.
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 
 from ..config import RAW_DATA_FILES, PROCESSED_DATA_FILES
 
@@ -238,7 +238,7 @@ def load_processed_data(
     return pd.read_csv(filepath)
 
 
-def get_data_info() -> Dict[str, any]:
+def get_data_info() -> Dict[str, Any]:
     """
     Get information about available data files.
     

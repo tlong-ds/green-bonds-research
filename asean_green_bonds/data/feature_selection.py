@@ -38,10 +38,11 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LassoCV
 from sklearn.preprocessing import StandardScaler
-from typing import Tuple, List, Optional, Dict
+from typing import Tuple, List, Optional, Dict, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
 
 
 class DiagnosticReport:
@@ -672,9 +673,11 @@ def compare_specifications(
 def calculate_vif(df: pd.DataFrame, exclude_cols: Optional[List[str]] = None) -> pd.DataFrame:
     """
     [BACKWARD COMPATIBILITY ALIAS]
-    Use diagnose_multicollinearity() instead.
+    Calculate Variance Inflation Factors (VIF) for multicollinearity detection.
+    
+    For new code, consider using diagnose_multicollinearity() with theory_vars.
     """
-    return diagnose_multicollinearity(df, exclude_cols=exclude_cols or [])
+    return calculate_vif_old(df, exclude_cols)
 
 
 def correlation_filter(

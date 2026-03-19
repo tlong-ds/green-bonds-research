@@ -8,10 +8,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Any
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings (matplotlib/seaborn deprecations)
+warnings.filterwarnings('ignore', category=FutureWarning, module='matplotlib')
+warnings.filterwarnings('ignore', category=UserWarning, module='seaborn')
 
 # Set default style
 sns.set_style("whitegrid")

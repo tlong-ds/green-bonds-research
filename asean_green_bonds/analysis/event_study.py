@@ -6,11 +6,12 @@ Analyzes stock market reactions to green bond announcements and issuances.
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, List, Dict, Any
 from datetime import timedelta
 import warnings
 
-warnings.filterwarnings('ignore')
+# Suppress only specific expected warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def calculate_abnormal_returns(
@@ -20,7 +21,7 @@ def calculate_abnormal_returns(
     window_start: int = -5,
     window_end: int = 5,
     estimation_window: int = 120,
-) -> Tuple[pd.DataFrame, Dict[str, any]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Calculate abnormal returns around event date using mean-adjusted model.
     
@@ -203,7 +204,7 @@ def test_event_significance(
     abnormal_returns_df: pd.DataFrame,
     window_start: int = -5,
     window_end: int = 5,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Test statistical significance of abnormal returns in event window.
     
@@ -261,7 +262,7 @@ def run_event_study_analysis(
     time_col: str,
     window_days: Tuple[int, int] = (-5, 5),
     estimation_days: int = 120,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Comprehensive event study analysis.
     

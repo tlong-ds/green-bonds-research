@@ -28,6 +28,8 @@ from .processing import (
     normalize_percentages,
     create_log_features,
     encode_categorical_features,
+    create_financial_ratios,
+    create_lagged_features,
 )
 
 from .feature_selection import (
@@ -64,6 +66,8 @@ __all__ = [
     "normalize_percentages",
     "create_log_features",
     "encode_categorical_features",
+    "create_financial_ratios",
+    "create_lagged_features",
     # Feature Selection
     "calculate_vif",
     "correlation_filter",

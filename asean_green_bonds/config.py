@@ -52,6 +52,17 @@ CONTROL_VARIABLES = [
     "L1_Leverage",
     "L1_Asset_Turnover",
     "L1_Capital_Intensity",
+    "L1_Cash_Ratio",  # Added for completeness
+]
+
+# PSM features - NOTE: prior_green_bonds removed due to perfect collinearity with issuer_track_record
+PSM_FEATURES = [
+    "L1_Firm_Size",
+    "L1_Leverage",
+    "L1_Asset_Turnover",
+    "L1_Capital_Intensity",
+    "L1_Cash_Ratio",
+    # "prior_green_bonds",  # REMOVED: VIF=∞, identical to issuer_track_record
 ]
 
 LAGGED_VARIABLES = [

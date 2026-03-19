@@ -181,25 +181,27 @@ class TestEventStudy:
     
     def setup_method(self):
         """Setup test time series data."""
+        np.random.seed(42)
         n = 250
         dates = pd.date_range('2015-01-01', periods=n, freq='D')
         
         self.ts_df = pd.DataFrame({
             'date': dates,
             'returns': np.random.normal(0.0005, 0.02, n),
-            'event': 0,
         })
-        
-        # Add event on day 100 and 200
-        self.ts_df.loc[100, 'event'] = 1
-        self.ts_df.loc[200, 'event'] = 1
         self.ts_df.set_index('date', inplace=True)
+        
+        # Add event date column with actual dates (not binary indicator)
+        # Events occur on days 100 and 200
+        self.ts_df['event_date'] = pd.NaT
+        self.ts_df.iloc[100, self.ts_df.columns.get_loc('event_date')] = dates[100]
+        self.ts_df.iloc[200, self.ts_df.columns.get_loc('event_date')] = dates[200]
     
     def test_calculate_abnormal_returns(self):
         """Test abnormal return calculation."""
         ar, stats = analysis.calculate_abnormal_returns(
             self.ts_df,
-            event_date_col='event',
+            event_date_col='event_date',
             return_col='returns',
             window_start=-5,
             window_end=5

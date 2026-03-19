@@ -1,0 +1,389 @@
+"""
+Feature Engineering Module for PSM Attributes
+
+Handles engineering of missing PSM (Propensity Score Matching) attributes:
+- Has_Green_Framework (existing, rename)
+- Issuer_Track_Record (existing, rename)
+- Asset_Tangibility (engineer from sector proxy)
+- Prior_Green_Bonds (engineer from issuance history)
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Dict, Tuple
+
+
+# Sector-based tangibility ratios for Asset_Tangibility engineering
+SECTOR_TANGIBILITY = {
+    'Utilities': 0.70,
+    'Energy': 0.75,
+    'Infrastructure': 0.72,
+    'Real Estate': 0.85,
+    'Manufacturing': 0.65,
+    'Transportation': 0.68,
+    'Finance': 0.35,
+    'Financial Services': 0.35,
+    'Technology': 0.25,
+    'Healthcare': 0.40,
+    'Consumer': 0.45,
+    'Telecommunications': 0.55,
+    'Diversified': 0.50,
+}
+
+DEFAULT_TANGIBILITY = 0.55  # Cross-sector average fallback
+
+
+def engineer_psm_attributes(
+    gb_df: pd.DataFrame,
+    gb_raw: pd.DataFrame = None,
+    verbose: bool = True
+) -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """
+    Engineer all missing PSM attributes for green bonds dataset.
+    
+    Parameters
+    ----------
+    gb_df : pd.DataFrame
+        Green bonds dataframe with authenticity scores
+        (e.g., green_bonds_with_authenticity_score.csv)
+    gb_raw : pd.DataFrame, optional
+        Raw green bonds dataframe with issue dates
+        If None, will try to load from data directory
+    verbose : bool
+        If True, print detailed status messages
+        
+    Returns
+    -------
+    tuple
+        (engineered_df, engineering_metadata)
+        - engineered_df: DataFrame with 4 new PSM attributes
+        - engineering_metadata: Dict with engineering method details
+    """
+    
+    if verbose:
+        print("="*70)
+        print("ENGINEERING MISSING PSM ATTRIBUTES")
+        print("="*70)
+    
+    df = gb_df.copy()
+    metadata = {}
+    
+    # ========================================================================
+    # Step 1: Ensure we have issue dates
+    # ========================================================================
+    
+    if 'Dates: Issue Date' not in df.columns:
+        if gb_raw is not None and 'Dates: Issue Date' in gb_raw.columns:
+            # Determine which columns to merge
+            merge_cols = ['Deal PermID', 'Dates: Issue Date']
+            if 'Issuer/Borrower TRBC Economic Sector' not in df.columns and 'Issuer/Borrower TRBC Economic Sector' in gb_raw.columns:
+                merge_cols.append('Issuer/Borrower TRBC Economic Sector')
+            if 'Issuer/Borrower PermID' not in df.columns and 'Issuer/Borrower PermID' in gb_raw.columns:
+                merge_cols.append('Issuer/Borrower PermID')
+            
+            df = df.merge(
+                gb_raw[merge_cols],
+                on='Deal PermID',
+                how='left'
+            )
+        else:
+            if verbose:
+                print("\n⚠ Warning: No issue date information available")
+                print("  Prior_Green_Bonds will be set to 0 for all records")
+            df['Dates: Issue Date'] = None
+    
+    # ========================================================================
+    # Step 1: Standardize existing attributes
+    # ========================================================================
+    
+    if verbose:
+        print("\nStep 1: Standardizing existing attributes (lowercase)...")
+    
+    if 'has_green_framework' in df.columns:
+        # Already lowercase, just ensure it's present
+        metadata['has_green_framework'] = 'From issuer verification (already present)'
+        if verbose:
+            print(f"  ✓ has_green_framework: {df['has_green_framework'].sum()} issuers")
+    else:
+        raise ValueError("Missing column: has_green_framework")
+    
+    if 'issuer_track_record' in df.columns:
+        # Already lowercase, just ensure it's present
+        metadata['issuer_track_record'] = 'From issuer verification (already present)'
+        if verbose:
+            print(f"  ✓ issuer_track_record: min={df['issuer_track_record'].min()}, max={df['issuer_track_record'].max()}")
+    else:
+        raise ValueError("Missing column: issuer_track_record")
+    
+    # ========================================================================
+    # Step 2: Engineer Prior_Green_Bonds from issuance history
+    # ========================================================================
+    
+    if verbose:
+        print("\nStep 2: Engineering prior_green_bonds from issuance history...")
+    
+    if df['Dates: Issue Date'].notna().sum() > 0:
+        # Parse dates and sort
+        df['Issue_Date_Parsed'] = pd.to_datetime(df['Dates: Issue Date'], errors='coerce')
+        df_sorted = df.sort_values(['Issuer/Borrower Name Full', 'Issue_Date_Parsed']).reset_index(drop=True)
+        
+        # Count prior issues per issuer
+        prior_bonds_values = df_sorted.groupby('Issuer/Borrower Name Full').cumcount()
+        
+        # Map back to original order
+        df = df.sort_values(['Issuer/Borrower Name Full', 'Issue_Date_Parsed']).reset_index(drop=True)
+        df['prior_green_bonds'] = df.groupby('Issuer/Borrower Name Full').cumcount().values
+        df = df.sort_values('Deal PermID').reset_index(drop=True)
+        
+        metadata['prior_green_bonds'] = 'Count of prior issuances by issuer (from issue date history)'
+        
+        if verbose:
+            print(f"  ✓ prior_green_bonds: 0 to {df['prior_green_bonds'].max()}")
+            print(f"    - First-time issuers: {(df['prior_green_bonds'] == 0).sum()}")
+            print(f"    - Repeat issuers: {(df['prior_green_bonds'] > 0).sum()}")
+    else:
+        # No date information available
+        df['prior_green_bonds'] = 0
+        metadata['prior_green_bonds'] = 'Set to 0 (no issue date data available)'
+        if verbose:
+            print("  ⚠ No issue date data - setting all to 0")
+    
+    # ========================================================================
+    # Step 3: Engineer Asset_Tangibility from sector proxy
+    # ========================================================================
+    
+    if verbose:
+        print("\nStep 3: Estimating asset_tangibility by sector...")
+    
+    if 'Issuer/Borrower TRBC Economic Sector' not in df.columns:
+        if verbose:
+            print("  ⚠ Missing economic sector info - using default tangibility")
+        df['asset_tangibility'] = DEFAULT_TANGIBILITY
+        metadata['asset_tangibility'] = f'Default value ({DEFAULT_TANGIBILITY})'
+    else:
+        df['asset_tangibility'] = (
+            df['Issuer/Borrower TRBC Economic Sector']
+            .map(SECTOR_TANGIBILITY)
+            .fillna(DEFAULT_TANGIBILITY)
+        )
+        metadata['asset_tangibility'] = 'Sector-based proxy (theory: sector determines asset composition)'
+        
+        if verbose:
+            print(f"  ✓ asset_tangibility: {df['asset_tangibility'].mean():.3f} (mean)")
+            print(f"    Range: {df['asset_tangibility'].min():.2f} - {df['asset_tangibility'].max():.2f}")
+            print(f"    Sectors mapped: {len(df[df['Issuer/Borrower TRBC Economic Sector'].isin(SECTOR_TANGIBILITY.keys())])}")
+            print(f"    Using fallback: {(df['asset_tangibility'] == DEFAULT_TANGIBILITY).sum()}")
+    
+    # ========================================================================
+    # Verification
+    # ========================================================================
+    
+    if verbose:
+        print("\n" + "="*70)
+        print("VERIFICATION: All PSM Attributes Present")
+        print("="*70)
+    
+    required_vars = [
+        'has_green_framework',
+        'asset_tangibility',
+        'issuer_track_record',
+        'prior_green_bonds',
+    ]
+    
+    missing = []
+    for var in required_vars:
+        if var in df.columns:
+            non_null = df[var].notna().sum()
+            if verbose:
+                status = "✓" if non_null == len(df) else "⚠"
+                print(f"  {status} {var:30s} - {non_null:3d}/{len(df)} non-null")
+            if non_null < len(df):
+                missing.append(var)
+        else:
+            if verbose:
+                print(f"  ✗ {var:30s} - MISSING")
+            missing.append(var)
+    
+    if not missing:
+        if verbose:
+            print(f"\n✅ SUCCESS: All {len(required_vars)} PSM attributes engineered!")
+    else:
+        if verbose:
+            print(f"\n❌ Missing: {missing}")
+    
+    # Clean up temporary columns
+    df = df.drop(columns=['Issue_Date_Parsed'], errors='ignore')
+    
+    return df, metadata
+
+
+def get_sector_tangibility_map() -> Dict[str, float]:
+    """Get the sector tangibility mapping dictionary."""
+    return SECTOR_TANGIBILITY.copy()
+
+
+def get_default_tangibility() -> float:
+    """Get the default tangibility value for unmapped sectors."""
+    return DEFAULT_TANGIBILITY
+
+
+def merge_psm_into_panel(
+    panel_df: pd.DataFrame,
+    gb_engineered_df: pd.DataFrame,
+    market_df: pd.DataFrame,
+    verbose: bool = True
+) -> pd.DataFrame:
+    """
+    Merge engineered PSM attributes into the main panel dataset.
+    
+    Parameters
+    ----------
+    panel_df : pd.DataFrame
+        Main panel dataset with firm-year observations
+    gb_engineered_df : pd.DataFrame
+        Green bonds data with engineered PSM attributes
+    market_df : pd.DataFrame
+        Market data with ric-org_permid mapping
+    verbose : bool
+        If True, print detailed status messages
+        
+    Returns
+    -------
+    pd.DataFrame
+        Panel with merged PSM attributes
+    """
+    
+    if verbose:
+        print("="*70)
+        print("MERGING PSM ATTRIBUTES INTO FINAL PANEL")
+        print("="*70)
+    
+    df = panel_df.copy()
+    
+    # Step 1: Add org_permid from market_df if not present
+    if 'org_permid' not in df.columns:
+        market_org_permid = market_df[['ric', 'org_permid']].drop_duplicates()
+        df = df.merge(market_org_permid, on='ric', how='left')
+        if verbose:
+            print(f"\nStep 1: Added org_permid: {df['org_permid'].notna().sum()}/{len(df)} non-null")
+    else:
+        df['org_permid'] = pd.to_numeric(df['org_permid'], errors='coerce')
+        if verbose:
+            print(f"\nStep 1: org_permid already present: {df['org_permid'].notna().sum()}/{len(df)}")
+    
+    # Step 2: Prepare PSM data aggregated by issuer
+    if verbose:
+        print("\nStep 2: Aggregating PSM attributes by issuer...")
+    
+    gb_prepared = gb_engineered_df.copy()
+    gb_prepared['Dates: Issue Date'] = pd.to_datetime(gb_prepared['Dates: Issue Date'], errors='coerce')
+    
+    # Aggregate at issuer level (use most recent for issuers with multiple bonds)
+    gb_psm_by_issuer = gb_prepared.sort_values('Dates: Issue Date', na_position='last').groupby(
+        'Issuer/Borrower PermID'
+    ).last()[[
+        'has_green_framework',
+        'asset_tangibility',
+        'issuer_track_record',
+        'prior_green_bonds'
+    ]].reset_index()
+    
+    gb_psm_by_issuer = gb_psm_by_issuer.rename(columns={'Issuer/Borrower PermID': 'org_permid'})
+    gb_psm_by_issuer['org_permid'] = pd.to_numeric(gb_psm_by_issuer['org_permid'], errors='coerce')
+    df['org_permid'] = pd.to_numeric(df['org_permid'], errors='coerce')
+    
+    if verbose:
+        print(f"  ✓ Aggregated PSM for {len(gb_psm_by_issuer)} unique issuers")
+    
+    # Step 3: Initialize PSM columns with defaults
+    if verbose:
+        print("\nStep 3: Initializing PSM attributes with defaults...")
+    
+    df['has_green_framework'] = 0
+    df['asset_tangibility'] = 0.55
+    df['issuer_track_record'] = 0
+    df['prior_green_bonds'] = 0
+    
+    # Step 4: Merge PSM features
+    if verbose:
+        print("\nStep 4: Merging PSM features from green bond issuers...")
+    
+    if len(gb_psm_by_issuer) > 0:
+        df = df.merge(
+            gb_psm_by_issuer,
+            on='org_permid',
+            how='left',
+            suffixes=('_default', '_issuer')
+        )
+        
+        # Use issuer-specific values where available
+        for col in ['has_green_framework', 'asset_tangibility', 'issuer_track_record', 'prior_green_bonds']:
+            issuer_col = f'{col}_issuer'
+            default_col = f'{col}_default'
+            
+            if issuer_col in df.columns:
+                df[col] = df[issuer_col].fillna(df[default_col])
+                df = df.drop(columns=[issuer_col, default_col], errors='ignore')
+            elif default_col in df.columns:
+                df = df.rename(columns={default_col: col})
+    
+    if verbose:
+        print(f"  ✓ Merged into panel: {df.shape}")
+    
+    # Step 5: Verification
+    if verbose:
+        print("\nStep 5: Verification")
+        psm_cols = ['has_green_framework', 'asset_tangibility', 'issuer_track_record', 'prior_green_bonds']
+        for col in psm_cols:
+            if col in df.columns:
+                non_null = df[col].notna().sum()
+                print(f"  ✓ {col:35s} - {non_null}/{len(df)} non-null")
+    
+    return df
+
+
+def normalize_psm_attributes(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+    """
+    Normalize PSM attribute names to lowercase and ensure consistency.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with PSM attributes (any case)
+    verbose : bool
+        If True, print normalization messages
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with normalized lowercase column names
+    """
+    
+    df = df.copy()
+    
+    # Mapping of possible column name variations to lowercase standard names
+    psm_mappings = {
+        'Has_Green_Framework': 'has_green_framework',
+        'has_green_framework': 'has_green_framework',
+        'Asset_Tangibility': 'asset_tangibility',
+        'asset_tangibility': 'asset_tangibility',
+        'Issuer_Track_Record': 'issuer_track_record',
+        'issuer_track_record': 'issuer_track_record',
+        'Prior_Green_Bonds': 'prior_green_bonds',
+        'prior_green_bonds': 'prior_green_bonds',
+    }
+    
+    # Rename columns
+    rename_map = {}
+    for old_name, new_name in psm_mappings.items():
+        if old_name in df.columns and old_name != new_name:
+            rename_map[old_name] = new_name
+    
+    if rename_map:
+        df = df.rename(columns=rename_map)
+        if verbose:
+            print("Normalized PSM attribute names to lowercase:")
+            for old, new in rename_map.items():
+                print(f"  {old} → {new}")
+    
+    return df

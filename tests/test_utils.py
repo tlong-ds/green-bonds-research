@@ -19,6 +19,8 @@ class TestStatisticalUtilities:
     
     def test_calculate_effect_size_cohens_d(self):
         """Test Cohen's d calculation."""
+        # Cohen's d = (mean1 - mean2) / pooled_sd
+        # Since group1 ~ N(0,1) and group2 ~ N(1,1), d should be approximately -1
         effect = utils.calculate_effect_size(
             self.group1,
             self.group2,
@@ -27,7 +29,9 @@ class TestStatisticalUtilities:
         
         assert isinstance(effect, float)
         assert not np.isnan(effect)
-        assert effect > 0  # group2 should be larger
+        # Effect is negative because group1 < group2; check it's approximately -1
+        assert effect < 0
+        assert abs(effect + 1) < 0.5  # Close to -1
     
     def test_calculate_effect_size_hedges_g(self):
         """Test Hedges' g calculation."""
@@ -190,11 +194,12 @@ class TestDataValidation:
     
     def setup_method(self):
         """Setup test data."""
+        np.random.seed(42)
         self.df = pd.DataFrame({
             'ric': np.repeat(np.arange(5), 10),
             'Year': np.tile(np.arange(2015, 2025), 5),
             'value': np.random.normal(0, 1, 50),
-            'treatment': np.random.binomial(1, 0.3, 50),
+            'green_bond_issue': np.random.binomial(1, 0.3, 50),  # Use correct column name
         })
     
     def test_validate_panel_structure(self):
@@ -229,7 +234,7 @@ class TestDataValidation:
     
     def test_validate_treatment_variation(self):
         """Test treatment variation validation."""
-        report = utils.validate_treatment_variation(self.df)
+        report = utils.validate_treatment_variation(self.df)  # Uses default 'green_bond_issue'
         
         assert 'total_entities' in report
         assert 'treated_entities' in report
@@ -256,7 +261,7 @@ class TestValidationIntegration:
             'ric': np.repeat(np.arange(10), 10),
             'Year': np.tile(np.arange(2015, 2025), 10),
             'outcome': np.random.normal(0, 1, 100),
-            'treatment': np.random.binomial(1, 0.3, 100),
+            'green_bond_issue': np.random.binomial(1, 0.3, 100),  # Use correct column name
         })
         
         # Run all validations
