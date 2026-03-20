@@ -97,6 +97,22 @@ def merge_green_bonds(
         right_on="org_permid_str",
         how="inner"
     )
+
+    if 'Year' in gb_mapped.columns:
+        gb_mapped['Year'] = pd.to_numeric(gb_mapped['Year'], errors='coerce')
+
+    cert_col_candidates = [
+        'is_certified',
+        'is_certified_processed',
+        'is_cbi_certified',
+        'is_icma_certified',
+    ]
+    cert_col = next((c for c in cert_col_candidates if c in gb_mapped.columns), None)
+    if cert_col is None:
+        gb_mapped['is_certified'] = 0
+        cert_col = 'is_certified'
+    else:
+        gb_mapped['is_certified'] = pd.to_numeric(gb_mapped[cert_col], errors='coerce').fillna(0).clip(0, 1)
     
     # Aggregate green bonds by firm-year
     gb_agg = gb_mapped.groupby(["ric", "Year"], as_index=False).agg(
@@ -111,7 +127,9 @@ def merge_green_bonds(
     ).values
     
     gb_agg["green_bond_issue"] = 1
-    gb_agg["prop_certified"] = gb_agg["certified_proceeds"] / gb_agg["green_bond_proceeds"]
+    gb_agg["prop_certified"] = (
+        gb_agg["certified_proceeds"] / gb_agg["green_bond_proceeds"].replace({0: np.nan})
+    ).fillna(0.0).clip(0.0, 1.0)
     gb_agg["share_certified_proceeds"] = gb_agg["prop_certified"]
     gb_agg["self_labeled_share"] = 1 - gb_agg["share_certified_proceeds"]
     gb_agg["is_certified"] = (gb_agg["prop_certified"] >= 0.5).astype(int)

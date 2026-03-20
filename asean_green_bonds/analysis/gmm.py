@@ -445,6 +445,10 @@ def estimate_system_gmm(
         max_lags = int(GMM_CONFIG.get("max_lags", 2))
     if survivorship_mode is None:
         survivorship_mode = SURVIVORSHIP_CONFIG.get("mode", "ignore")
+    collapse_policy = str(GMM_CONFIG.get("collapse_policy", "auto"))
+    collapse_entity_threshold = int(GMM_CONFIG.get("collapse_entity_threshold", 500))
+    min_overid_df = int(GMM_CONFIG.get("min_overid_df", 1))
+    require_valid_overid = bool(GMM_CONFIG.get("require_valid_overid_for_interpretation", True))
 
     def _error_result(message: str, n_obs: int = 0, n_instruments: Optional[int] = None) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -543,8 +547,21 @@ def estimate_system_gmm(
     instr_cols_valid = [c for c in instr_cols if c in df_reg.columns]
     if max_instruments is not None and max_instruments > 0:
         instr_cols_valid = instr_cols_valid[:max_instruments]
-    if bool(GMM_CONFIG.get("collapse_instruments", False)):
+
+    pre_collapse_count = len(instr_cols_valid)
+    if collapse_policy == "always":
+        collapse_applied = True
+    elif collapse_policy == "never":
+        collapse_applied = False
+    else:
+        n_entities_for_policy = len(df_reg.index.get_level_values(0).unique())
+        collapse_applied = n_entities_for_policy >= collapse_entity_threshold
+        if "collapse_policy" not in GMM_CONFIG:
+            collapse_applied = bool(GMM_CONFIG.get("collapse_instruments", False))
+            collapse_policy = "legacy"
+    if collapse_applied:
         instr_cols_valid = _collapse_instrument_list(instr_cols_valid)
+    post_collapse_count = len(instr_cols_valid)
     if len(instr_cols_valid) == 0:
         return _error_result('No valid instruments in data', n_obs=len(df_reg))
     
@@ -634,6 +651,12 @@ def estimate_system_gmm(
     # Sargan-Hansen test
     n_params = len(results.params)
     sargan_test = sargan_hansen_test(residuals, instruments_clean, n_params)
+    overid_df = sargan_test.get('df', np.nan)
+    if pd.isna(overid_df):
+        diagnostics_valid = False
+    else:
+        diagnostics_valid = int(overid_df) >= min_overid_df
+    interpretation_ready = (not require_valid_overid) or diagnostics_valid
     
     # Build results dictionary
     n_entities = len(y_clean.index.get_level_values(0).unique())
@@ -649,6 +672,10 @@ def estimate_system_gmm(
         'n_entities': n_entities,
         'n_periods': len(y_clean.index.get_level_values(1).unique()),
         'n_instruments': len(instr_cols_valid),
+        'n_instruments_pre_collapse': pre_collapse_count,
+        'n_instruments_post_collapse': post_collapse_count,
+        'collapse_policy': collapse_policy,
+        'collapse_applied': collapse_applied,
         'instrument_entity_ratio': float(instr_entity_ratio),
         'instruments_used': instr_cols_valid,
         'endogenous_treatment': endogenous_treatment,
@@ -663,6 +690,8 @@ def estimate_system_gmm(
         'sargan_statistic': sargan_test.get('statistic', np.nan),
         'sargan_df': sargan_test.get('df', np.nan),
         'sargan_pvalue': sargan_test.get('p_value', np.nan),
+        'sargan_valid_for_interpretation': diagnostics_valid,
+        'interpretation_ready': interpretation_ready,
         # Inference
         'confidence_interval': (float(coef - 1.96*se), float(coef + 1.96*se)),
         'significant_5pct': abs(t_stat) > 1.96,
@@ -679,6 +708,14 @@ def estimate_system_gmm(
     if instr_entity_ratio > 1.0:
         result['instrument_warning'] = (
             f"Instrument count ({len(instr_cols_valid)}) exceeds entity count ({n_entities})."
+        )
+    if not diagnostics_valid:
+        result['diagnostic_warning'] = (
+            f"Sargan/Hansen diagnostics invalid or unavailable (df={sargan_test.get('df', np.nan)})."
+        )
+    if require_valid_overid and not interpretation_ready:
+        result['interpretation_warning'] = (
+            "Model does not meet minimum overidentification diagnostic requirements for interpretation."
         )
     
     return result

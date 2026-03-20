@@ -97,6 +97,13 @@ PSM_CALIPER = 0.1  # Default caliper for matching (used when PSM_CALIPER_METHOD=
 PSM_RATIO = 4      # Ratio of controls to treated
 PSM_CALIPER_METHOD = "austin"  # 'austin' (0.25*SD), 'logit' (0.2*SD(logit)), or 'fixed'
 PSM_CALIPER_MIN = 0.01  # Minimum caliper to prevent over-restriction
+PSM_QUALITY_CONFIG = {
+    "trim_to_common_support": True,  # Enable trimming by default before matching
+    "trimming_method": "crump",  # 'crump' or 'percentile'
+    "trimming_alpha": 0.1,  # Trimming threshold
+    "min_matched_treated_ratio": 0.7,  # Quality gate for retained treated units
+    "max_abs_std_diff": 0.1,  # Standardized mean difference gate
+}
 
 # Statistical significance levels
 ALPHA_SIG = 0.05     # 5% significance level
@@ -125,9 +132,13 @@ SURVIVORSHIP_CONFIG = {
 # System GMM estimation parameters
 GMM_CONFIG = {
     "max_lags": 3,  # Maximum lags for automatic instrument selection
-    "collapse_instruments": True,  # Collapse instruments to reduce count
+    "collapse_instruments": True,  # Backward-compatible fallback behavior
+    "collapse_policy": "auto",  # 'auto', 'always', or 'never'
+    "collapse_entity_threshold": 500,  # Auto-collapse only for large panels
     "robust_se": True,  # Use robust standard errors
     "ar_test_order": 2,  # Order for Arellano-Bond AR test (should be insignificant)
+    "min_overid_df": 1,  # Minimum overidentification df for valid Sargan/Hansen interpretation
+    "require_valid_overid_for_interpretation": True,  # Flag models not ready for causal interpretation
 }
 
 # ESG data gap handling (tiered authenticity scoring)

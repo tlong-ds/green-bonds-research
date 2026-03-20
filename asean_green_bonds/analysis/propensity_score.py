@@ -10,6 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from typing import Tuple, Optional, Dict, List, Any, Union
 import warnings
+from ..config import PSM_CALIPER, PSM_CALIPER_METHOD, PSM_QUALITY_CONFIG
 
 # Suppress only specific expected warnings, not all
 warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
@@ -267,6 +268,7 @@ def nearest_neighbor_matching(
     ps_col: str = 'propensity_score',
     treatment_col: str = 'green_bond_issue',
     caliper: Union[float, str] = 0.1,
+    caliper_method: str = 'austin',
     ratio: int = 1,
     replacement: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
@@ -285,6 +287,8 @@ def nearest_neighbor_matching(
         Maximum PS distance for match (default: 0.1).
         If 'auto', uses calculate_optimal_caliper() with 'austin' method.
         If float, uses fixed caliper value.
+    caliper_method : str, optional
+        Method used when caliper='auto' (default: 'austin').
     ratio : int, optional
         Number of controls per treated unit (default: 1).
     replacement : bool, optional
@@ -308,7 +312,7 @@ def nearest_neighbor_matching(
     # Handle 'auto' caliper
     if caliper == 'auto':
         all_ps = df[ps_col].dropna()
-        caliper = calculate_optimal_caliper(all_ps, method='austin')
+        caliper = calculate_optimal_caliper(all_ps, method=caliper_method)
     else:
         caliper = float(caliper)
     
@@ -431,15 +435,15 @@ def create_matched_dataset(
     df: pd.DataFrame,
     treatment_col: str = 'green_bond_issue',
     ps_col: str = 'propensity_score',
-    caliper: float = 0.1,
+    caliper: Optional[Union[float, str]] = None,
     ratio: int = 4,
     check_support: bool = True,
-    trim_to_common_support: bool = False,
-    trimming_method: str = 'crump',
-    trimming_alpha: float = 0.1,
+    trim_to_common_support: Optional[bool] = None,
+    trimming_method: Optional[str] = None,
+    trimming_alpha: Optional[float] = None,
     enforce_quality: bool = False,
-    min_matched_treated_ratio: float = 0.7,
-    max_abs_std_diff: float = 0.1,
+    min_matched_treated_ratio: Optional[float] = None,
+    max_abs_std_diff: Optional[float] = None,
     balance_features: Optional[List[str]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
@@ -453,20 +457,20 @@ def create_matched_dataset(
         Treatment column name (default: 'green_bond_issue').
     ps_col : str, optional
         Propensity score column name (default: 'propensity_score').
-    caliper : float, optional
-        Maximum PS distance (default: 0.1).
+    caliper : float or 'auto', optional
+        Maximum PS distance. If None, resolves from config policy.
     ratio : int, optional
         Controls per treated unit (default: 4).
     check_support : bool, optional
         If True, verify common support first (default: True).
     trim_to_common_support : bool, optional
         If True, trim extreme propensity scores before matching using
-        trim_extreme_propensity_scores (default: False).
+        trim_extreme_propensity_scores. If None, uses config default.
     trimming_method : str, optional
-        Trimming method, one of {'crump', 'percentile'} (default: 'crump').
+        Trimming method, one of {'crump', 'percentile'}. If None, uses config.
     trimming_alpha : float, optional
         Trimming threshold alpha passed to trim_extreme_propensity_scores
-        (default: 0.1).
+        (if None, uses config).
         
     Returns
     -------
@@ -474,6 +478,31 @@ def create_matched_dataset(
         (matched_dataset: pd.DataFrame, diagnostic_report: dict)
     """
     df = df.copy()
+
+    if caliper == 'auto':
+        caliper_value: Union[float, str] = 'auto'
+        caliper_method = PSM_CALIPER_METHOD
+    elif caliper is None:
+        if PSM_CALIPER_METHOD == 'fixed':
+            caliper_value = float(PSM_CALIPER)
+            caliper_method = 'fixed'
+        else:
+            caliper_value = 'auto'
+            caliper_method = PSM_CALIPER_METHOD
+    else:
+        caliper_value = float(caliper)
+        caliper_method = 'fixed'
+
+    if trim_to_common_support is None:
+        trim_to_common_support = bool(PSM_QUALITY_CONFIG.get('trim_to_common_support', False))
+    if trimming_method is None:
+        trimming_method = str(PSM_QUALITY_CONFIG.get('trimming_method', 'crump'))
+    if trimming_alpha is None:
+        trimming_alpha = float(PSM_QUALITY_CONFIG.get('trimming_alpha', 0.1))
+    if min_matched_treated_ratio is None:
+        min_matched_treated_ratio = float(PSM_QUALITY_CONFIG.get('min_matched_treated_ratio', 0.7))
+    if max_abs_std_diff is None:
+        max_abs_std_diff = float(PSM_QUALITY_CONFIG.get('max_abs_std_diff', 0.1))
     
     # Create year-level treatment indicator
     df['ever_treated'] = df.groupby('ric')[treatment_col].transform('max')
@@ -494,31 +523,44 @@ def create_matched_dataset(
     
     if trim_to_common_support:
         before_trim_n = len(df)
-        df = trim_extreme_propensity_scores(
+        trimmed_df = trim_extreme_propensity_scores(
             df,
             ps_col=ps_col,
             treatment_col=treatment_col,
             method=trimming_method,
             alpha=trimming_alpha,
         )
+        # Guard against pathological trimming that removes all treated or controls.
+        treated_after = int((trimmed_df[treatment_col] == 1).sum()) if treatment_col in trimmed_df.columns else 0
+        control_after = int((trimmed_df[treatment_col] == 0).sum()) if treatment_col in trimmed_df.columns else 0
+        trim_applied = treated_after > 0 and control_after > 0 and len(trimmed_df) > 0
+        if trim_applied:
+            df = trimmed_df
         diagnostics['trimming'] = {
             'enabled': True,
             'method': trimming_method,
             'alpha': trimming_alpha,
             'n_before': before_trim_n,
-            'n_after': len(df),
-            'n_dropped': before_trim_n - len(df),
+            'n_after': len(trimmed_df) if trim_applied else before_trim_n,
+            'n_dropped': before_trim_n - (len(trimmed_df) if trim_applied else before_trim_n),
+            'applied': trim_applied,
+            'skipped_reason': None if trim_applied else 'trim_removed_treated_or_control_group',
         }
     else:
-        diagnostics['trimming'] = {'enabled': False}
+        diagnostics['trimming'] = {'enabled': False, 'applied': False}
     
     # Perform matching
     matched_df, match_stats = nearest_neighbor_matching(
         df, ps_col=ps_col, treatment_col=treatment_col,
-        caliper=caliper, ratio=ratio
+        caliper=caliper_value, caliper_method=caliper_method, ratio=ratio
     )
     
     diagnostics['matching_stats'] = match_stats
+    diagnostics['caliper_policy'] = {
+        'requested_caliper': caliper,
+        'resolved_method': caliper_method,
+        'resolved_caliper': float(match_stats.get('caliper', np.nan)),
+    }
 
     features_for_balance = balance_features or [
         c for c in ['L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover', 'L1_Capital_Intensity', 'L1_Cash_Ratio']

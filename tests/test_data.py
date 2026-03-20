@@ -247,6 +247,31 @@ class TestDataProcessing:
         assert row_2021['share_certified_proceeds'] == 0.0
         assert row_2021['self_labeled_share'] == 1.0
 
+    def test_merge_green_bonds_treats_missing_certification_as_self_labeled(self):
+        """Missing certification should default to non-certified in firm-year shares."""
+        panel_df = pd.DataFrame({
+            'ric': ['RIC1', 'RIC1'],
+            'Year': [2020, 2021],
+        })
+        market_df = pd.DataFrame({
+            'org_permid': ['1001'],
+            'ric': ['RIC1'],
+        })
+        gb_df = pd.DataFrame({
+            'org_permid': ['1001', '1001'],
+            'Year': [2020, 2021],
+            'Proceeds Amount This Market': [80.0, 20.0],
+            'is_certified': [1, np.nan],
+        })
+        merged = data.merge_green_bonds(panel_df, gb_df, market_df)
+        row_2020 = merged[merged['Year'] == 2020].iloc[0]
+        row_2021 = merged[merged['Year'] == 2021].iloc[0]
+        assert row_2020['share_certified_proceeds'] == pytest.approx(1.0)
+        assert row_2020['self_labeled_share'] == pytest.approx(0.0)
+        assert row_2021['share_certified_proceeds'] == pytest.approx(0.0)
+        assert row_2021['self_labeled_share'] == pytest.approx(1.0)
+        assert row_2021['is_certified'] == 0
+
 
 class TestFeatureSelection:
     """Tests for feature selection functions."""

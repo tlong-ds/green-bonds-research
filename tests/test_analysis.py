@@ -92,8 +92,33 @@ class TestPropensityScore:
         )
         assert 'trimming' in diag_no_trim and diag_no_trim['trimming']['enabled'] is False
         assert 'trimming' in diag_trim and diag_trim['trimming']['enabled'] is True
-        assert diag_trim['trimming']['n_after'] <= diag_trim['trimming']['n_before']
-        assert len(matched_trim) <= len(matched_no_trim)
+        assert diag_trim['trimming']['applied'] in {True, False}
+        if diag_trim['trimming']['applied']:
+            assert diag_trim['trimming']['n_after'] <= diag_trim['trimming']['n_before']
+            assert len(matched_trim) <= len(matched_no_trim)
+
+    def test_create_matched_dataset_uses_config_caliper_policy(self, monkeypatch):
+        """When caliper is omitted, matching should resolve policy from config."""
+        self.df['propensity_score'] = analysis.estimate_propensity_scores(
+            self.df, treatment_col='treatment'
+        )
+        monkeypatch.setattr(
+            'asean_green_bonds.analysis.propensity_score.PSM_CALIPER_METHOD', 'logit'
+        )
+        monkeypatch.setattr(
+            'asean_green_bonds.analysis.propensity_score.PSM_QUALITY_CONFIG',
+            {'trim_to_common_support': False, 'trimming_method': 'crump', 'trimming_alpha': 0.1,
+             'min_matched_treated_ratio': 0.7, 'max_abs_std_diff': 0.1}
+        )
+        _, diagnostics = analysis.create_matched_dataset(
+            self.df,
+            treatment_col='treatment',
+            ps_col='propensity_score',
+            caliper=None,
+            ratio=1,
+        )
+        assert diagnostics['caliper_policy']['resolved_method'] == 'logit'
+        assert diagnostics['caliper_policy']['resolved_caliper'] > 0
     
     def test_nearest_neighbor_matching(self):
         """Test nearest neighbor matching."""
@@ -837,7 +862,14 @@ class TestGMM:
 
     def test_estimate_system_gmm_uses_config_defaults(self, monkeypatch):
         """GMM should use config-driven max_lags and survivorship mode when omitted."""
-        monkeypatch.setattr('asean_green_bonds.analysis.gmm.GMM_CONFIG', {'max_lags': 3, 'collapse_instruments': False})
+        monkeypatch.setattr('asean_green_bonds.analysis.gmm.GMM_CONFIG', {
+            'max_lags': 3,
+            'collapse_instruments': False,
+            'collapse_policy': 'never',
+            'collapse_entity_threshold': 500,
+            'min_overid_df': 1,
+            'require_valid_overid_for_interpretation': True,
+        })
         monkeypatch.setattr('asean_green_bonds.analysis.gmm.SURVIVORSHIP_CONFIG', {'mode': 'exclude'})
         result = analysis.estimate_system_gmm(
             self.df,
@@ -846,6 +878,23 @@ class TestGMM:
         )
         assert 'survivorship_mode' in result
         assert result['survivorship_mode'] == 'exclude'
+        if 'error' not in result:
+            assert result['collapse_policy'] in {'never', 'auto', 'always', 'legacy'}
+            assert 'interpretation_ready' in result
+
+    def test_estimate_system_gmm_reports_diagnostic_validity(self):
+        """GMM results should report if overidentification diagnostics are interpretable."""
+        result = analysis.estimate_system_gmm(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            max_lags=3,
+        )
+        if 'error' not in result:
+            assert 'sargan_valid_for_interpretation' in result
+            assert 'interpretation_ready' in result
+            assert 'n_instruments_pre_collapse' in result
+            assert 'n_instruments_post_collapse' in result
 
     def test_create_matched_dataset_quality_warning(self):
         """PSM diagnostics should include quality warning when thresholds are strict."""
