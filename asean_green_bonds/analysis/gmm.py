@@ -75,6 +75,33 @@ def select_gmm_instruments(
     return valid_instruments
 
 
+def _select_lagged_instruments_for_variable(
+    df: pd.DataFrame,
+    variable: str,
+    entity_col: str = 'ric',
+    time_col: str = 'Year',
+    max_lags: int = 3,
+    min_obs_fraction: float = 0.3,
+) -> List[str]:
+    """Create lagged instruments L2..Lk for a single variable when coverage is adequate."""
+    if variable not in df.columns:
+        return []
+    
+    valid_instruments = []
+    n_total = len(df)
+    df_sorted = df.sort_values([entity_col, time_col])
+    
+    for lag in range(2, max_lags + 1):
+        col_name = f'L{lag}_{variable}'
+        lagged = df_sorted.groupby(entity_col)[variable].shift(lag)
+        coverage = lagged.notna().sum() / n_total
+        if coverage >= min_obs_fraction:
+            df[col_name] = lagged.values
+            valid_instruments.append(col_name)
+    
+    return valid_instruments
+
+
 def _prepare_gmm_data(
     df: pd.DataFrame,
     outcome: str,
@@ -85,6 +112,7 @@ def _prepare_gmm_data(
     instruments: Optional[List[str]],
     max_lags: int,
     min_obs_fraction: float = 0.3,
+    endogenous_treatment: bool = False,
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Prepare data for GMM estimation.
@@ -108,9 +136,14 @@ def _prepare_gmm_data(
     
     # Select or generate instruments
     if instruments is None:
-        instruments = select_gmm_instruments(
+        instruments = _select_lagged_instruments_for_variable(
             df, outcome, entity_col, time_col, max_lags, min_obs_fraction
         )
+        if endogenous_treatment:
+            treatment_instruments = _select_lagged_instruments_for_variable(
+                df, treatment_col, entity_col, time_col, max_lags, min_obs_fraction
+            )
+            instruments = instruments + treatment_instruments
     
     if len(instruments) == 0:
         return None, "No valid instruments available"
@@ -329,6 +362,11 @@ def estimate_system_gmm(
     instruments: Optional[List[str]] = None,
     max_lags: int = 2,
     min_obs_fraction: float = 0.3,
+    endogenous_treatment: bool = False,
+    max_instruments: Optional[int] = 20,
+    cov_type: str = 'clustered',
+    survivorship_mode: str = 'ignore',
+    survivorship_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Estimate System GMM model for dynamic panel.
@@ -357,6 +395,19 @@ def estimate_system_gmm(
     min_obs_fraction : float, optional
         Minimum non-missing fraction for lag instrument retention when
         instruments are auto-generated (default: 0.3).
+    endogenous_treatment : bool, optional
+        If True, treat treatment as endogenous and instrument it with lagged
+        treatment values (default: False).
+    max_instruments : int, optional
+        Optional hard cap on number of instruments retained (default: 20).
+    cov_type : str, optional
+        Covariance type for inference. Supports 'clustered' and 'robust'.
+        Defaults to 'clustered' with robust fallback when unavailable.
+    survivorship_mode : str, optional
+        Survivorship handling mode passed to data.prepare_analysis_sample:
+        'ignore' (default), 'exclude', or 'weight'.
+    survivorship_kwargs : dict, optional
+        Additional arguments passed to data.prepare_analysis_sample.
         
     Returns
     -------
@@ -385,10 +436,24 @@ def estimate_system_gmm(
             'L1_Capital_Intensity'
         ]
     
+    if survivorship_kwargs is None:
+        survivorship_kwargs = {}
+    
+    # Optional survivorship handling before model prep
+    if survivorship_mode != 'ignore':
+        from ..data.processing import prepare_analysis_sample
+        df = prepare_analysis_sample(
+            df,
+            survivorship_mode=survivorship_mode,
+            firm_col=entity_col,
+            time_col=time_col,
+            **survivorship_kwargs,
+        )
+    
     # Prepare data
     df_prep, error = _prepare_gmm_data(
         df, outcome, treatment_col, entity_col, time_col,
-        control_vars, instruments, max_lags, min_obs_fraction
+        control_vars, instruments, max_lags, min_obs_fraction, endogenous_treatment
     )
     
     if error is not None:
@@ -419,11 +484,16 @@ def estimate_system_gmm(
     # Dependent variable
     y = df_reg[outcome]
     
-    # Endogenous: lagged dependent variable (instrumented)
-    endog = df_reg[[lagged_dep]] if lagged_dep in df_reg.columns else None
+    # Endogenous variables
+    endog_cols = [lagged_dep] if lagged_dep in df_reg.columns else []
+    if endogenous_treatment and treatment_col in df_reg.columns:
+        endog_cols.append(treatment_col)
+    endog = df_reg[endog_cols] if len(endog_cols) > 0 else None
     
     # Exogenous: treatment + controls
-    exog_cols = [treatment_col] + [c for c in ctrl_vars if c in df_reg.columns]
+    exog_cols = [c for c in [treatment_col] + ctrl_vars if c in df_reg.columns]
+    if endogenous_treatment:
+        exog_cols = [c for c in exog_cols if c != treatment_col]
     exog_cols = list(dict.fromkeys(exog_cols))  # Remove duplicates
     
     # Filter out columns not in df_reg
@@ -444,6 +514,8 @@ def estimate_system_gmm(
     
     # Instruments
     instr_cols_valid = [c for c in instr_cols if c in df_reg.columns]
+    if max_instruments is not None and max_instruments > 0:
+        instr_cols_valid = instr_cols_valid[:max_instruments]
     if len(instr_cols_valid) == 0:
         return {
             'error': 'No valid instruments in data',
@@ -454,7 +526,7 @@ def estimate_system_gmm(
     instruments_df = df_reg[instr_cols_valid]
     
     # Remove rows with any NaN
-    all_cols = list(set([outcome, lagged_dep] + exog_cols + instr_cols_valid))
+    all_cols = list(set([outcome] + endog_cols + exog_cols + instr_cols_valid))
     all_cols = [c for c in all_cols if c in df_reg.columns]
     mask = df_reg[all_cols].notna().all(axis=1)
     
@@ -494,7 +566,19 @@ def estimate_system_gmm(
                 instruments=instruments_clean,
             )
         
-        results = model.fit(cov_type='robust')
+        cov_requested = cov_type
+        cov_used = cov_requested
+        cov_warning = None
+        if cov_requested == 'clustered':
+            try:
+                clusters = y_clean.index.get_level_values(0)
+                results = model.fit(cov_type='clustered', clusters=clusters)
+            except Exception:
+                cov_used = 'robust'
+                cov_warning = "Clustered covariance unavailable for IVGMM; used robust instead."
+                results = model.fit(cov_type='robust')
+        else:
+            results = model.fit(cov_type='robust')
         
     except Exception as e:
         error_msg = str(e)
@@ -537,6 +621,8 @@ def estimate_system_gmm(
     sargan_test = sargan_hansen_test(residuals, instruments_clean, n_params)
     
     # Build results dictionary
+    n_entities = len(y_clean.index.get_level_values(0).unique())
+    instr_entity_ratio = len(instr_cols_valid) / max(n_entities, 1)
     result = {
         'outcome': outcome,
         'treatment': treatment_col,
@@ -545,10 +631,15 @@ def estimate_system_gmm(
         't_statistic': float(t_stat),
         'p_value': float(p_value),
         'n_obs': int(len(y_clean)),
-        'n_entities': len(y_clean.index.get_level_values(0).unique()),
+        'n_entities': n_entities,
         'n_periods': len(y_clean.index.get_level_values(1).unique()),
         'n_instruments': len(instr_cols_valid),
+        'instrument_entity_ratio': float(instr_entity_ratio),
         'instruments_used': instr_cols_valid,
+        'endogenous_treatment': endogenous_treatment,
+        'cov_type_requested': cov_requested,
+        'cov_type_used': cov_used,
+        'survivorship_mode': survivorship_mode,
         # Diagnostic tests
         'ar1_statistic': ar1_test.get('statistic', np.nan),
         'ar1_pvalue': ar1_test.get('p_value', np.nan),
@@ -568,6 +659,13 @@ def estimate_system_gmm(
         result['lagged_dep_coefficient'] = float(results.params[lagged_dep])
         result['lagged_dep_pvalue'] = float(results.pvalues[lagged_dep])
     
+    if cov_warning is not None:
+        result['covariance_warning'] = cov_warning
+    if instr_entity_ratio > 1.0:
+        result['instrument_warning'] = (
+            f"Instrument count ({len(instr_cols_valid)}) exceeds entity count ({n_entities})."
+        )
+    
     return result
 
 
@@ -579,6 +677,11 @@ def run_gmm_robustness(
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     max_lags: int = 2,
+    endogenous_treatment: bool = False,
+    max_instruments: Optional[int] = 20,
+    cov_type: str = 'clustered',
+    survivorship_mode: str = 'ignore',
+    survivorship_kwargs: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """
     Run System GMM for multiple outcomes and compile results.
@@ -599,6 +702,16 @@ def run_gmm_robustness(
         Control variables.
     max_lags : int, optional
         Maximum lags for instruments (default: 2).
+    endogenous_treatment : bool, optional
+        If True, treat treatment as endogenous (default: False).
+    max_instruments : int, optional
+        Optional hard cap on instruments retained (default: 20).
+    cov_type : str, optional
+        Covariance type for inference (default: 'clustered').
+    survivorship_mode : str, optional
+        Survivorship handling mode ('ignore', 'exclude', 'weight').
+    survivorship_kwargs : dict, optional
+        Additional arguments for survivorship sample preparation.
         
     Returns
     -------
@@ -617,6 +730,11 @@ def run_gmm_robustness(
             time_col=time_col,
             control_vars=control_vars,
             max_lags=max_lags,
+            endogenous_treatment=endogenous_treatment,
+            max_instruments=max_instruments,
+            cov_type=cov_type,
+            survivorship_mode=survivorship_mode,
+            survivorship_kwargs=survivorship_kwargs,
         )
         
         if 'error' not in result:
@@ -638,3 +756,12 @@ def run_gmm_robustness(
         return pd.DataFrame(results)
     else:
         return pd.DataFrame()
+
+
+__all__ = [
+    "select_gmm_instruments",
+    "arellano_bond_test",
+    "sargan_hansen_test",
+    "estimate_system_gmm",
+    "run_gmm_robustness",
+]

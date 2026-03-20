@@ -226,14 +226,22 @@ def check_common_support(
     # Calculate overlap region
     overlap_min = max(treated_min, control_min)
     overlap_max = min(treated_max, control_max)
+    has_overlap = overlap_min <= overlap_max
     
     # Count violations (units outside common support)
-    treated_violations = (treated < overlap_min).sum() + (treated > overlap_max).sum()
-    control_violations = (control < overlap_min).sum() + (control > overlap_max).sum()
+    if has_overlap:
+        treated_in_support = (treated >= overlap_min) & (treated <= overlap_max)
+        control_in_support = (control >= overlap_min) & (control <= overlap_max)
+    else:
+        treated_in_support = pd.Series(False, index=treated.index)
+        control_in_support = pd.Series(False, index=control.index)
+    
+    treated_violations = (~treated_in_support).sum()
+    control_violations = (~control_in_support).sum()
     
     # Overlap percentage
-    treated_overlap = (treated_violations == 0).sum() / len(treated) * 100 if len(treated) > 0 else 0
-    control_overlap = (control_violations == 0).sum() / len(control) * 100 if len(control) > 0 else 0
+    treated_overlap = treated_in_support.mean() * 100 if len(treated) > 0 else 0
+    control_overlap = control_in_support.mean() * 100 if len(control) > 0 else 0
     
     report = {
         'treated_mean_ps': treated.mean(),
@@ -241,6 +249,7 @@ def check_common_support(
         'control_mean_ps': control.mean(),
         'control_sd_ps': control.std(),
         'overlap_region': (overlap_min, overlap_max),
+        'has_overlap': has_overlap,
         'treated_violations': treated_violations,
         'control_violations': control_violations,
         'treated_overlap_pct': treated_overlap,
@@ -425,6 +434,9 @@ def create_matched_dataset(
     caliper: float = 0.1,
     ratio: int = 4,
     check_support: bool = True,
+    trim_to_common_support: bool = False,
+    trimming_method: str = 'crump',
+    trimming_alpha: float = 0.1,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Create propensity-score matched dataset for DiD analysis.
@@ -443,6 +455,14 @@ def create_matched_dataset(
         Controls per treated unit (default: 4).
     check_support : bool, optional
         If True, verify common support first (default: True).
+    trim_to_common_support : bool, optional
+        If True, trim extreme propensity scores before matching using
+        trim_extreme_propensity_scores (default: False).
+    trimming_method : str, optional
+        Trimming method, one of {'crump', 'percentile'} (default: 'crump').
+    trimming_alpha : float, optional
+        Trimming threshold alpha passed to trim_extreme_propensity_scores
+        (default: 0.1).
         
     Returns
     -------
@@ -453,9 +473,12 @@ def create_matched_dataset(
     
     # Create year-level treatment indicator
     df['ever_treated'] = df.groupby('ric')[treatment_col].transform('max')
-    df['treatment_year'] = df.groupby('ric')[df[treatment_col] == 1].transform(
-        lambda x: x.index[0] if len(x) > 0 else None
+    treatment_years = (
+        df[df[treatment_col] == 1]
+        .groupby('ric')['Year']
+        .min()
     )
+    df['treatment_year'] = df['ric'].map(treatment_years)
     
     diagnostics = {}
     
@@ -464,6 +487,26 @@ def create_matched_dataset(
         diagnostics['common_support'] = check_common_support(
             df, ps_col=ps_col, treatment_col=treatment_col
         )
+    
+    if trim_to_common_support:
+        before_trim_n = len(df)
+        df = trim_extreme_propensity_scores(
+            df,
+            ps_col=ps_col,
+            treatment_col=treatment_col,
+            method=trimming_method,
+            alpha=trimming_alpha,
+        )
+        diagnostics['trimming'] = {
+            'enabled': True,
+            'method': trimming_method,
+            'alpha': trimming_alpha,
+            'n_before': before_trim_n,
+            'n_after': len(df),
+            'n_dropped': before_trim_n - len(df),
+        }
+    else:
+        diagnostics['trimming'] = {'enabled': False}
     
     # Perform matching
     matched_df, match_stats = nearest_neighbor_matching(

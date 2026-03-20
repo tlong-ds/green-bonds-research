@@ -53,6 +53,47 @@ class TestPropensityScore:
         assert 'overlap_region' in report
         assert report['treated_count'] > 0
         assert report['control_count'] > 0
+        assert 0 <= report['treated_overlap_pct'] <= 100
+        assert 0 <= report['control_overlap_pct'] <= 100
+    
+    def test_check_common_support_overlap_percentages(self):
+        """Test overlap percentages reflect in-support shares."""
+        df = pd.DataFrame({
+            'treatment': [1, 1, 1, 0, 0, 0],
+            'propensity_score': [0.2, 0.5, 0.8, 0.1, 0.5, 0.7],
+        })
+        report = analysis.check_common_support(
+            df, ps_col='propensity_score', treatment_col='treatment'
+        )
+        # Overlap is [0.2, 0.7]
+        # Treated in-support: 0.2, 0.5 => 2/3
+        # Control in-support: 0.5, 0.7 => 2/3
+        assert pytest.approx(report['treated_overlap_pct'], rel=1e-6) == (2 / 3) * 100
+        assert pytest.approx(report['control_overlap_pct'], rel=1e-6) == (2 / 3) * 100
+    
+    def test_create_matched_dataset_with_optional_trimming(self):
+        """Trimming remains opt-in but reports diagnostics when enabled."""
+        self.df['propensity_score'] = analysis.estimate_propensity_scores(
+            self.df, treatment_col='treatment'
+        )
+        matched_no_trim, diag_no_trim = analysis.create_matched_dataset(
+            self.df,
+            treatment_col='treatment',
+            ps_col='propensity_score',
+            trim_to_common_support=False,
+        )
+        matched_trim, diag_trim = analysis.create_matched_dataset(
+            self.df,
+            treatment_col='treatment',
+            ps_col='propensity_score',
+            trim_to_common_support=True,
+            trimming_method='crump',
+            trimming_alpha=0.1,
+        )
+        assert 'trimming' in diag_no_trim and diag_no_trim['trimming']['enabled'] is False
+        assert 'trimming' in diag_trim and diag_trim['trimming']['enabled'] is True
+        assert diag_trim['trimming']['n_after'] <= diag_trim['trimming']['n_before']
+        assert len(matched_trim) <= len(matched_no_trim)
     
     def test_nearest_neighbor_matching(self):
         """Test nearest neighbor matching."""
@@ -258,6 +299,7 @@ class TestDifferenceInDifferences:
         assert 'std_error' in result
         assert 'p_value' in result
         assert result['n_obs'] > 0
+        assert result['survivorship_mode'] == 'ignore'
     
     def test_estimate_did_time_fe(self):
         """Test DiD with time fixed effects."""
@@ -270,6 +312,70 @@ class TestDifferenceInDifferences:
         
         assert 'coefficient' in result
         assert not pd.isna(result.get('coefficient'))
+    
+    def test_estimate_did_with_survivorship_weight_mode(self):
+        """DiD supports survivorship sample weighting mode."""
+        result = analysis.estimate_did(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            survivorship_mode='weight',
+            survivorship_kwargs={
+                'recent_years': [2023, 2024],
+                'early_years': [2015, 2016],
+            },
+        )
+        assert 'error' not in result
+        assert result['survivorship_mode'] == 'weight'
+    
+    def test_estimate_did_treatment_absorbed_returns_flagged_result(self):
+        """Absorbed treatment under FE returns flagged non-error result."""
+        df_absorbed = self.df.copy()
+        # Time-invariant treatment is absorbed by entity fixed effects.
+        df_absorbed['green_bond_active'] = (df_absorbed['ric'] <= 5).astype(int)
+        result = analysis.estimate_did(
+            df_absorbed,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            specification='entity_fe'
+        )
+        
+        assert 'error' not in result
+        assert result['treatment_absorbed'] is True
+        assert pd.isna(result['coefficient'])
+        assert pd.isna(result['std_error'])
+        assert pd.isna(result['p_value'])
+        assert 'green_bond_active' in result['absorbed_vars']
+        assert result['model_estimated'] is True
+    
+    def test_estimate_did_all_exog_absorbed_returns_non_error(self):
+        """If all regressors are absorbed, return structured non-error output."""
+        df_all_abs = self.df.copy()
+        # Make all regressors time-invariant by entity so entity FE absorbs all.
+        for col in [
+            'L1_Firm_Size',
+            'L1_Leverage',
+            'L1_Asset_Turnover',
+            'L1_Capital_Intensity',
+        ]:
+            df_all_abs[col] = df_all_abs.groupby('ric')[col].transform('first')
+        # Keep between-entity variation but no within-entity variation.
+        df_all_abs['green_bond_active'] = (df_all_abs['ric'] <= 5).astype(int)
+        result = analysis.estimate_did(
+            df_all_abs,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            specification='entity_fe'
+        )
+        
+        assert 'error' not in result
+        assert 'model_estimated' in result
+        assert pd.isna(result['coefficient'])
+        assert pd.isna(result['std_error'])
+        assert isinstance(result['absorbed_vars'], list)
+        assert len(result['absorbed_vars']) >= 1
+        if result.get('model_estimated') is False:
+            assert result['estimation_note'] is not None
     
     def test_run_multiple_outcomes(self):
         """Test batch DiD estimation."""
@@ -295,6 +401,27 @@ class TestDifferenceInDifferences:
         
         assert isinstance(factor, float)
         assert factor >= 1.0  # Should be at least 1 (no inflation)
+    
+    def test_parallel_trends_test_handles_non_full_rank_exog(self):
+        """Parallel trends should not fail when leads/lags are rank-deficient."""
+        result = analysis.parallel_trends_test(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            leads=3,
+            lags=3,
+        )
+        
+        expected_cols = [f'treatment_lead_{i}' for i in range(1, 4)] + [
+            'green_bond_active'
+        ] + [f'treatment_lag_{i}' for i in range(1, 4)]
+        
+        assert result['specification'] == 'parallel_trends'
+        assert set(result['coefficients'].keys()) == set(expected_cols)
+        assert set(result['p_values'].keys()) == set(expected_cols)
+        assert 'absorbed_vars' in result
+        assert 'model_estimated' in result
+        assert any(not pd.isna(v) for v in result['coefficients'].values())
 
 
 class TestEventStudy:
@@ -380,6 +507,8 @@ class TestDiagnostics:
         
         assert 'placebo_coefficient' in result
         assert 'placebo_p_value' in result
+        assert 'model_estimated' in result
+        assert 'absorbed_vars' in result
     
     def test_specification_sensitivity(self):
         """Test specification sensitivity."""
@@ -392,6 +521,21 @@ class TestDiagnostics:
         assert isinstance(results, pd.DataFrame)
         assert len(results) > 0
         assert 'specification' in results.columns
+        assert 'model_estimated' in results.columns
+        assert 'absorbed_vars' in results.columns
+
+    def test_leave_one_out_cv_absorbed_treatment_returns_structured_error(self):
+        """LOOCV should not raise when treatment is absorbed by entity FE."""
+        df_absorbed = self.df.copy()
+        df_absorbed['green_bond_active'] = (df_absorbed['ric'] <= 5).astype(int)
+        result = analysis.leave_one_out_cv(
+            df_absorbed,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+        )
+        assert isinstance(result, dict)
+        assert result.get('test_name') == 'leave_one_out_cv'
+        assert 'error' in result or 'mean_coefficient' in result
     
     def test_heterogeneous_effects(self):
         """Test heterogeneous effects analysis."""
@@ -404,6 +548,19 @@ class TestDiagnostics:
             heterogeneity_var='subgroup'
         )
         
+        assert isinstance(results, dict)
+        assert len(results) >= 1
+    
+    def test_heterogeneous_effects_with_bins(self):
+        """Continuous heterogeneity can be binned for subgroup analysis."""
+        self.df['continuous_subgroup'] = np.random.uniform(0, 1, len(self.df))
+        results = analysis.heterogeneous_effects_analysis(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            heterogeneity_var='continuous_subgroup',
+            n_bins=3,
+        )
         assert isinstance(results, dict)
         assert len(results) >= 1
 
@@ -489,6 +646,7 @@ class TestGMM:
         # Check diagnostic test keys
         assert 'ar2_pvalue' in result
         assert 'sargan_pvalue' in result
+        assert result['cov_type_used'] in {'clustered', 'robust'}
     
     def test_gmm_coefficient_sign(self):
         """Test that GMM detects positive treatment effect."""
@@ -501,6 +659,19 @@ class TestGMM:
         if 'error' not in result:
             # Treatment effect should be positive (as simulated)
             assert result['coefficient'] > -0.5, "Coefficient too negative"
+    
+    def test_estimate_system_gmm_endogenous_treatment_opt_in(self):
+        """GMM should support opt-in endogenous treatment instrumentation."""
+        result = analysis.estimate_system_gmm(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            endogenous_treatment=True,
+            max_lags=3,
+        )
+        if 'error' not in result:
+            assert result['endogenous_treatment'] is True
+            assert 'cov_type_used' in result
     
     def test_arellano_bond_test(self):
         """Test AR(2) test returns sensible p-values."""

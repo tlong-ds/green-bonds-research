@@ -122,6 +122,32 @@ class TestDataProcessing:
         
         assert 'ln_total_assets' in df_log.columns
         assert df_log['ln_total_assets'].notna().any()
+    
+    def test_merge_green_bonds_adds_certification_shares(self):
+        """Green bond merge should expose continuous certification shares."""
+        panel_df = pd.DataFrame({
+            'ric': ['RIC1', 'RIC1'],
+            'Year': [2020, 2021],
+        })
+        market_df = pd.DataFrame({
+            'org_permid': ['1001'],
+            'ric': ['RIC1'],
+        })
+        gb_df = pd.DataFrame({
+            'org_permid': ['1001', '1001'],
+            'Year': [2020, 2021],
+            'Proceeds Amount This Market': [100.0, 50.0],
+            'is_certified': [1, 0],
+        })
+        merged = data.merge_green_bonds(panel_df, gb_df, market_df)
+        assert 'share_certified_proceeds' in merged.columns
+        assert 'self_labeled_share' in merged.columns
+        row_2020 = merged[merged['Year'] == 2020].iloc[0]
+        row_2021 = merged[merged['Year'] == 2021].iloc[0]
+        assert row_2020['share_certified_proceeds'] == 1.0
+        assert row_2020['self_labeled_share'] == 0.0
+        assert row_2021['share_certified_proceeds'] == 0.0
+        assert row_2021['self_labeled_share'] == 1.0
 
 
 class TestFeatureSelection:
@@ -406,6 +432,17 @@ class TestSurvivorshipBias:
         )
         
         # Should only have survived firms
+        remaining_firms = df_result['ric'].unique()
+        assert all(firm in self.firms_survived for firm in remaining_firms)
+    
+    def test_prepare_analysis_sample_exclude_ignores_weight_kwargs(self):
+        """Exclude mode should ignore kwargs meant for weighting."""
+        df_result = data.prepare_analysis_sample(
+            self.df,
+            survivorship_mode='exclude',
+            recent_years=[2023, 2024, 2025],
+            early_years=[2015, 2016, 2017],  # not used by exclude mode
+        )
         remaining_firms = df_result['ric'].unique()
         assert all(firm in self.firms_survived for firm in remaining_firms)
     

@@ -7,11 +7,13 @@ Implements DiD regression with fixed effects and clustered standard errors.
 import pandas as pd
 import numpy as np
 from linearmodels.panel import PanelOLS, FirstDifferenceOLS
+from linearmodels.panel.utility import AbsorbingEffectWarning
 from typing import Tuple, Optional, List, Dict, Any
 import warnings
 
 # Suppress only specific expected warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='linearmodels')
+warnings.filterwarnings('ignore', category=AbsorbingEffectWarning, module='linearmodels')
 
 
 def prepare_panel_for_regression(
@@ -62,6 +64,8 @@ def estimate_did(
     control_vars: Optional[List[str]] = None,
     specification: str = 'entity_fe',
     cluster_entity: bool = True,
+    survivorship_mode: str = 'ignore',
+    survivorship_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Estimate difference-in-differences treatment effect.
@@ -89,12 +93,29 @@ def estimate_did(
         (default: 'entity_fe')
     cluster_entity : bool, optional
         If True, cluster standard errors at entity level (default: True).
+    survivorship_mode : str, optional
+        Survivorship handling mode ('ignore', 'exclude', 'weight').
+    survivorship_kwargs : dict, optional
+        Additional arguments passed to data.prepare_analysis_sample.
         
     Returns
     -------
     dict
         Regression results including coefficient, std error, t-stat, p-value.
     """
+    if survivorship_kwargs is None:
+        survivorship_kwargs = {}
+    
+    if survivorship_mode != 'ignore':
+        from ..data.processing import prepare_analysis_sample
+        df = prepare_analysis_sample(
+            df,
+            survivorship_mode=survivorship_mode,
+            firm_col=entity_col,
+            time_col=time_col,
+            **survivorship_kwargs,
+        )
+    
     if control_vars is None:
         control_vars = [
             'L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover',
@@ -139,8 +160,12 @@ def estimate_did(
             'available_columns': list(df_reg.columns[:20]),  # Show first 20 columns for debugging
         }
     
+    required_cols = [*regressors, outcome]
+    if survivorship_mode == 'weight' and 'survivorship_weight' in df_reg.columns:
+        required_cols.append('survivorship_weight')
+    
     # Drop missing values in regressors and outcome simultaneously
-    df_clean = df_reg[[*regressors, outcome]].dropna()
+    df_clean = df_reg[required_cols].dropna()
     
     # Check minimum sample size
     if len(df_clean) < 10:
@@ -153,6 +178,9 @@ def estimate_did(
     
     X = df_clean[regressors]
     y = df_clean[outcome]
+    weights = None
+    if survivorship_mode == 'weight' and 'survivorship_weight' in df_clean.columns:
+        weights = df_clean['survivorship_weight']
     
     # Check for and remove collinear variables using VIF and correlation
     def remove_collinear_features(X, threshold=0.90, keep_col=None):
@@ -210,25 +238,69 @@ def estimate_did(
                 'n_obs': len(y),
             }
     
+    n_entities = len(df_reg.index.get_level_values(0).unique())
+    n_periods = len(df_reg.index.get_level_values(1).unique())
+
+    def _build_absorbed_result(absorbed_vars: Optional[List[str]] = None, note: Optional[str] = None) -> Dict[str, Any]:
+        absorbed_list = list(dict.fromkeys(absorbed_vars or regressors))
+        return {
+            'outcome': outcome,
+            'treatment': treatment_col,
+            'specification': specification,
+            'coefficient': np.nan,
+            'std_error': np.nan,
+            't_statistic': np.nan,
+            'p_value': np.nan,
+            'r_squared': np.nan,
+            'adj_r_squared': np.nan,
+            'n_obs': len(y),
+            'n_entities': n_entities,
+            'n_periods': n_periods,
+            'confidence_interval': (np.nan, np.nan),
+            'significant_5pct': False,
+            'significant_10pct': False,
+            'dropped_collinear_vars': dropped_cols if dropped_cols else [],
+            'absorbed_vars': absorbed_list,
+            'treatment_absorbed': treatment_col in absorbed_list,
+            'model_estimated': False,
+            'estimation_note': note or 'all_exogenous_variables_absorbed',
+            'survivorship_mode': survivorship_mode,
+        }
+
     # Fit model based on specification
     cov_type = 'clustered' if cluster_entity else 'robust'
     cov_kwargs = {'cluster_entity': True} if cluster_entity else {}
     
     try:
         if specification == 'entity_fe':
-            model = PanelOLS(y, X, entity_effects=True, time_effects=False, check_rank=False)
+            model = PanelOLS(
+                y, X, entity_effects=True, time_effects=False,
+                check_rank=False, drop_absorbed=True, weights=weights
+            )
         elif specification == 'time_fe':
-            model = PanelOLS(y, X, entity_effects=False, time_effects=True, check_rank=False)
+            model = PanelOLS(
+                y, X, entity_effects=False, time_effects=True,
+                check_rank=False, drop_absorbed=True, weights=weights
+            )
         elif specification == 'twoway_fe':
-            model = PanelOLS(y, X, entity_effects=True, time_effects=True, check_rank=False)
+            model = PanelOLS(
+                y, X, entity_effects=True, time_effects=True,
+                check_rank=False, drop_absorbed=True, weights=weights
+            )
         else:  # 'none'
             # Add time dummies manually - using indices from cleaned data
             time_dummies = pd.get_dummies(y.index.get_level_values(time_col), drop_first=True)
             time_dummies.index = y.index
             # Use concat instead of join to avoid cartesian product with non-unique indices
             X = pd.concat([X, time_dummies], axis=1)
-            model = PanelOLS(y, X, entity_effects=False, time_effects=False, check_rank=False)
+            model = PanelOLS(
+                y, X, entity_effects=False, time_effects=False,
+                check_rank=False, drop_absorbed=True, weights=weights
+            )
     except Exception as e:
+        err_msg = str(e).lower()
+        if 'fully absorbed' in err_msg or 'all columns in exog' in err_msg:
+            return _build_absorbed_result(note=str(e))
         return {
             'error': f"Model creation failed: {str(e)}",
             'outcome': outcome,
@@ -238,30 +310,59 @@ def estimate_did(
     
     # Estimate
     try:
-        results = model.fit(cov_type=cov_type, **cov_kwargs)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', AbsorbingEffectWarning)
+            results = model.fit(cov_type=cov_type, **cov_kwargs)
     except Exception as e:
-        return {
-            'error': str(e),
-            'outcome': outcome,
-            'specification': specification,
-            'n_obs': len(y),
-        }
+        err_msg = str(e).lower()
+        if 'fully absorbed' in err_msg or 'all columns in exog' in err_msg:
+            return _build_absorbed_result(note=str(e))
+        if cluster_entity and ('float division by zero' in err_msg or 'division by zero' in err_msg):
+            # Fallback when clustered covariance fails due degenerate clusters.
+            try:
+                results = model.fit(cov_type='robust')
+            except Exception as e2:
+                err2 = str(e2).lower()
+                if 'float division by zero' in err2 or 'division by zero' in err2:
+                    return _build_absorbed_result(note=f"{str(e)}; robust_fallback_failed: {str(e2)}")
+                if 'fully absorbed' in err2 or 'all columns in exog' in err2:
+                    return _build_absorbed_result(note=str(e2))
+                return {
+                    'error': str(e2),
+                    'outcome': outcome,
+                    'specification': specification,
+                    'n_obs': len(y),
+                }
+        else:
+            return {
+                'error': str(e),
+                'outcome': outcome,
+                'specification': specification,
+                'n_obs': len(y),
+            }
     
+    model_exog = getattr(results.model, "exog", None)
+    retained_vars = list(getattr(model_exog, "vars", [])) if model_exog is not None else []
+    absorbed_vars = [v for v in regressors if v not in retained_vars]
+    if not retained_vars:
+        return _build_absorbed_result(absorbed_vars=absorbed_vars, note='all_exogenous_variables_absorbed')
+
+    treatment_absorbed = treatment_col in absorbed_vars or treatment_col not in results.params.index
+
     # Extract treatment coefficient
     if treatment_col in results.params.index:
-        coef = results.params[treatment_col]
-        se = results.std_errors[treatment_col]
-        t_stat = results.tstats[treatment_col]
-        p_value = results.pvalues[treatment_col]
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)
+            coef = results.params[treatment_col]
+            se = results.std_errors[treatment_col]
+            t_stat = results.tstats[treatment_col]
+            p_value = results.pvalues[treatment_col]
     else:
-        # Treatment variable not in results, return error
-        return {
-            'error': f"Treatment variable '{treatment_col}' not found in model results",
-            'outcome': outcome,
-            'specification': specification,
-            'n_obs': len(y),
-        }
-    
+        coef = np.nan
+        se = np.nan
+        t_stat = np.nan
+        p_value = np.nan
+
     return {
         'outcome': outcome,
         'treatment': treatment_col,
@@ -273,12 +374,20 @@ def estimate_did(
         'r_squared': results.rsquared,  # Use rsquared instead of r2
         'adj_r_squared': results.rsquared_within,  # Use rsquared_within instead of r2_within
         'n_obs': len(y),
-        'n_entities': len(df_reg.index.get_level_values(0).unique()),
-        'n_periods': len(df_reg.index.get_level_values(1).unique()),
-        'confidence_interval': (coef - 1.96*se, coef + 1.96*se),
-        'significant_5pct': abs(t_stat) > 1.96,
-        'significant_10pct': abs(t_stat) > 1.645,
+        'n_entities': n_entities,
+        'n_periods': n_periods,
+        'confidence_interval': (
+            np.nan if pd.isna(coef) or pd.isna(se) else coef - 1.96 * se,
+            np.nan if pd.isna(coef) or pd.isna(se) else coef + 1.96 * se,
+        ),
+        'significant_5pct': bool(abs(t_stat) > 1.96) if not pd.isna(t_stat) else False,
+        'significant_10pct': bool(abs(t_stat) > 1.645) if not pd.isna(t_stat) else False,
         'dropped_collinear_vars': dropped_cols if dropped_cols else [],
+        'absorbed_vars': absorbed_vars,
+        'treatment_absorbed': treatment_absorbed,
+        'model_estimated': True,
+        'estimation_note': None,
+        'survivorship_mode': survivorship_mode,
     }
 
 
@@ -290,6 +399,8 @@ def run_multiple_outcomes(
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     specifications: Optional[List[str]] = None,
+    survivorship_mode: str = 'ignore',
+    survivorship_kwargs: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """
     Estimate DiD for multiple outcomes and specifications.
@@ -310,6 +421,10 @@ def run_multiple_outcomes(
         Control variables.
     specifications : list, optional
         Specifications to test. If None, tests all 4.
+    survivorship_mode : str, optional
+        Survivorship handling mode ('ignore', 'exclude', 'weight').
+    survivorship_kwargs : dict, optional
+        Additional arguments passed to data.prepare_analysis_sample.
         
     Returns
     -------
@@ -325,8 +440,16 @@ def run_multiple_outcomes(
     for outcome in outcomes:
         for spec in specifications:
             result = estimate_did(
-                df, outcome, treatment_col, entity_col, time_col,
-                control_vars, spec
+                df=df,
+                outcome=outcome,
+                treatment_col=treatment_col,
+                entity_col=entity_col,
+                time_col=time_col,
+                control_vars=control_vars,
+                specification=spec,
+                cluster_entity=True,
+                survivorship_mode=survivorship_mode,
+                survivorship_kwargs=survivorship_kwargs,
             )
             
             if 'error' not in result:
@@ -472,20 +595,57 @@ def parallel_trends_test(
     X = df_aligned[lead_lag_cols]
     y = df_aligned[outcome]
     
-    model = PanelOLS(y, X, entity_effects=True, time_effects=False)
-    results = model.fit(cov_type='clustered', cluster_entity=True)
-    
-    # Organize results
+    # Initialize with full requested design so downstream consumers always see all keys.
     pt_results = {
         'specification': 'parallel_trends',
         'leads_tested': leads,
         'lags_tested': lags,
-        'coefficients': {},
-        'p_values': {},
+        'coefficients': {col: np.nan for col in lead_lag_cols},
+        'p_values': {col: np.nan for col in lead_lag_cols},
+        'absorbed_vars': [],
+        'model_estimated': False,
+        'estimation_note': None,
     }
     
-    for i, col in enumerate(lead_lag_cols):
-        pt_results['coefficients'][col] = results.params.iloc[i]
-        pt_results['p_values'][col] = results.pvalues.iloc[i]
+    if df_aligned.empty:
+        pt_results['estimation_note'] = 'no_observations_after_alignment'
+        return pt_results
     
+    try:
+        model = PanelOLS(
+            y, X, entity_effects=True, time_effects=False,
+            check_rank=False, drop_absorbed=True
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', AbsorbingEffectWarning)
+            results = model.fit(cov_type='clustered', cluster_entity=True)
+    except Exception as e:
+        err_msg = str(e).lower()
+        if 'float division by zero' in err_msg or 'division by zero' in err_msg:
+            # Degenerate clustered covariance can happen in small/irregular panels.
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore', AbsorbingEffectWarning)
+                    results = model.fit(cov_type='robust')
+            except Exception as e2:
+                pt_results['estimation_note'] = str(e2)
+                return pt_results
+        else:
+            pt_results['estimation_note'] = str(e)
+            return pt_results
+    
+    retained_vars = list(results.params.index)
+    pt_results['absorbed_vars'] = [col for col in lead_lag_cols if col not in retained_vars]
+    
+    try:
+        pvalues = results.pvalues
+    except Exception:
+        pvalues = pd.Series(dtype=float)
+    
+    for col in retained_vars:
+        if col in pt_results['coefficients']:
+            pt_results['coefficients'][col] = results.params.get(col, np.nan)
+            pt_results['p_values'][col] = pvalues.get(col, np.nan)
+    
+    pt_results['model_estimated'] = True
     return pt_results

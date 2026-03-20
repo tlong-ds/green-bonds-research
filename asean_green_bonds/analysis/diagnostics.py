@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from typing import Tuple, Optional, List, Dict, Any
 import warnings
+from .difference_in_diff import estimate_did
 
 # Suppress only specific expected warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='linearmodels')
@@ -44,8 +45,6 @@ def placebo_test(
     dict
         Placebo effect (should be near zero if DiD identifies true treatment effect).
     """
-    from linearmodels.panel import PanelOLS
-    
     df_placebo = df.copy()
     
     # Shift treatment forward in time
@@ -66,30 +65,35 @@ def placebo_test(
     X = df_aligned[[f'{treatment_col}_placebo']]
     y = df_aligned[outcome]
     
-    try:
-        model = PanelOLS(y, X, entity_effects=True, time_effects=False)
-        results = model.fit(cov_type='clustered', cluster_entity=True)
-        
-        placebo_effect = results.params.iloc[0]
-        placebo_se = results.std_errors.iloc[0]
-        placebo_tstat = results.tstats.iloc[0]
-        placebo_pval = results.pvalues.iloc[0]
-        
+    did_result = estimate_did(
+        df_aligned.reset_index(),
+        outcome=outcome,
+        treatment_col=f'{treatment_col}_placebo',
+        entity_col=entity_col,
+        time_col=time_col,
+        control_vars=[],
+        specification='entity_fe',
+        cluster_entity=True,
+    )
+    if 'error' in did_result:
         return {
             'test_name': 'placebo_test',
-            'shift_years': placebo_shift,
-            'placebo_coefficient': placebo_effect,
-            'placebo_std_error': placebo_se,
-            'placebo_t_statistic': placebo_tstat,
-            'placebo_p_value': placebo_pval,
-            'is_zero_at_5pct': abs(placebo_tstat) < 1.96,
-            'n_observations': len(y),
+            'error': did_result['error'],
         }
-    except Exception as e:
-        return {
-            'test_name': 'placebo_test',
-            'error': str(e),
-        }
+    placebo_tstat = did_result.get('t_statistic', np.nan)
+    return {
+        'test_name': 'placebo_test',
+        'shift_years': placebo_shift,
+        'placebo_coefficient': did_result.get('coefficient', np.nan),
+        'placebo_std_error': did_result.get('std_error', np.nan),
+        'placebo_t_statistic': placebo_tstat,
+        'placebo_p_value': did_result.get('p_value', np.nan),
+        'is_zero_at_5pct': bool(abs(placebo_tstat) < 1.96) if not pd.isna(placebo_tstat) else False,
+        'n_observations': int(did_result.get('n_obs', len(df_aligned))),
+        'model_estimated': did_result.get('model_estimated', True),
+        'absorbed_vars': did_result.get('absorbed_vars', []),
+        'estimation_note': did_result.get('estimation_note'),
+    }
 
 
 def leave_one_out_cv(
@@ -122,8 +126,6 @@ def leave_one_out_cv(
     dict
         LOOCV results: mean coefficient, SD across folds, range.
     """
-    from linearmodels.panel import PanelOLS
-    
     df_clean = df[[entity_col, time_col, outcome, treatment_col]].dropna()
     
     if len(df_clean) < 50:
@@ -139,24 +141,23 @@ def leave_one_out_cv(
         drop_indices = np.random.choice(len(df_clean), size=max(1, len(df_clean)//10), replace=False)
         df_fold = df_clean.drop(df_clean.index[drop_indices])
         
-        df_fold = df_fold.set_index([entity_col, time_col])
-        
-        X = df_fold[[treatment_col]]
-        y = df_fold[outcome]
-        
-        # Align data properly
-        df_aligned = pd.concat([X, y], axis=1).dropna()
-        X = df_aligned[[treatment_col]]
-        y = df_aligned[outcome]
-        
-        try:
-            model = PanelOLS(y, X, entity_effects=True, time_effects=False)
-            results = model.fit(cov_type='clustered', cluster_entity=True)
-            coefficients.append(results.params.iloc[0])
-        except (ValueError, np.linalg.LinAlgError) as e:
-            # Skip this fold if estimation fails (singular matrix, insufficient data, etc.)
-            warnings.warn(f"LOOCV fold estimation failed: {e}")
+        did_result = estimate_did(
+            df_fold,
+            outcome=outcome,
+            treatment_col=treatment_col,
+            entity_col=entity_col,
+            time_col=time_col,
+            control_vars=[],
+            specification='entity_fe',
+            cluster_entity=True,
+        )
+        if 'error' in did_result:
+            warnings.warn(f"LOOCV fold estimation failed: {did_result['error']}")
             continue
+        coef = did_result.get('coefficient', np.nan)
+        if pd.isna(coef):
+            continue
+        coefficients.append(coef)
     
     if len(coefficients) > 1:
         mean_coef = np.mean(coefficients)
@@ -207,8 +208,6 @@ def specification_sensitivity(
     pd.DataFrame
         Coefficients and SEs across specifications.
     """
-    from linearmodels.panel import PanelOLS
-    
     if control_sets is None:
         control_sets = [
             [],  # No controls
@@ -225,10 +224,6 @@ def specification_sensitivity(
         regressors = [r for r in regressors if r in df.columns]
         
         df_reg = df[regressors + [entity_col, time_col, outcome]].dropna()
-        df_reg = df_reg.set_index([entity_col, time_col])
-        
-        X = df_reg[regressors]
-        y = df_reg[outcome]
         
         result_row = {
             'specification': f'Spec_{spec_num+1}',
@@ -239,23 +234,35 @@ def specification_sensitivity(
             't_statistic': None,
             'p_value': None,
             'r2_within': None,
-            'n_obs': len(y),
+            'n_obs': len(df_reg),
             'error': None,
+            'model_estimated': None,
+            'absorbed_vars': [],
+            'estimation_note': None,
         }
-        
-        try:
-            model = PanelOLS(y, X, entity_effects=True, time_effects=False)
-            est = model.fit(cov_type='clustered', cluster_entity=True)
-            
+        did_result = estimate_did(
+            df_reg,
+            outcome=outcome,
+            treatment_col=treatment_col,
+            entity_col=entity_col,
+            time_col=time_col,
+            control_vars=controls,
+            specification='entity_fe',
+            cluster_entity=True,
+        )
+        if 'error' in did_result:
+            result_row['error'] = did_result['error']
+        else:
             result_row.update({
-                'coefficient': est.params.iloc[0],
-                'std_error': est.std_errors.iloc[0],
-                't_statistic': est.tstats.iloc[0],
-                'p_value': est.pvalues.iloc[0],
-                'r2_within': est.rsquared_within,
+                'coefficient': did_result.get('coefficient'),
+                'std_error': did_result.get('std_error'),
+                't_statistic': did_result.get('t_statistic'),
+                'p_value': did_result.get('p_value'),
+                'r2_within': did_result.get('adj_r_squared'),
+                'model_estimated': did_result.get('model_estimated', True),
+                'absorbed_vars': did_result.get('absorbed_vars', []),
+                'estimation_note': did_result.get('estimation_note'),
             })
-        except Exception as e:
-            result_row['error'] = str(e)
         
         results.append(result_row)
     
@@ -269,6 +276,7 @@ def heterogeneous_effects_analysis(
     entity_col: str = 'ric',
     time_col: str = 'Year',
     heterogeneity_var: str = 'is_certified',
+    n_bins: int = 0,
 ) -> Dict[str, Any]:
     """
     Analyze treatment effect heterogeneity by subgroup.
@@ -287,47 +295,61 @@ def heterogeneous_effects_analysis(
         Time identifier (default: 'Year').
     heterogeneity_var : str, optional
         Variable defining subgroups (default: 'is_certified').
+    n_bins : int, optional
+        If heterogeneity_var is continuous and n_bins > 1, split into quantile
+        bins and estimate effects by bin (default: 0, disabled).
         
     Returns
     -------
     dict
         Treatment effects by subgroup.
     """
-    from linearmodels.panel import PanelOLS
-    
     effects = {}
     
     if heterogeneity_var not in df.columns:
         return {'error': f'Variable {heterogeneity_var} not found'}
     
-    for group_val in df[heterogeneity_var].unique():
+    working_df = df.copy()
+    group_var = heterogeneity_var
+    if n_bins and n_bins > 1:
+        non_na = working_df[heterogeneity_var].dropna()
+        if non_na.nunique() >= n_bins:
+            group_var = f'{heterogeneity_var}_bin'
+            working_df[group_var] = pd.qcut(
+                working_df[heterogeneity_var],
+                q=n_bins,
+                labels=False,
+                duplicates='drop',
+            )
+    
+    for group_val in working_df[group_var].unique():
         if pd.isna(group_val):
             continue
         
-        df_group = df[df[heterogeneity_var] == group_val]
-        df_group = df_group.set_index([entity_col, time_col])
-        
-        X = df_group[[treatment_col]]
-        y = df_group[outcome]
-        
-        # Align data properly
-        df_aligned = pd.concat([X, y], axis=1).dropna()
-        X = df_aligned[[treatment_col]]
-        y = df_aligned[outcome]
-        
-        try:
-            model = PanelOLS(y, X, entity_effects=True, time_effects=False)
-            results = model.fit(cov_type='clustered', cluster_entity=True)
-            
-            effects[f'{heterogeneity_var}_{group_val}'] = {
-                'coefficient': results.params.iloc[0],
-                'std_error': results.std_errors.iloc[0],
-                't_statistic': results.tstats.iloc[0],
-                'p_value': results.pvalues.iloc[0],
-                'n_obs': len(y),
+        df_group = working_df[working_df[group_var] == group_val]
+        did_result = estimate_did(
+            df_group,
+            outcome=outcome,
+            treatment_col=treatment_col,
+            entity_col=entity_col,
+            time_col=time_col,
+            control_vars=[],
+            specification='entity_fe',
+            cluster_entity=True,
+        )
+        if 'error' in did_result:
+            effects[f'{group_var}_{group_val}'] = {'error': did_result['error']}
+        else:
+            effects[f'{group_var}_{group_val}'] = {
+                'coefficient': did_result.get('coefficient', np.nan),
+                'std_error': did_result.get('std_error', np.nan),
+                't_statistic': did_result.get('t_statistic', np.nan),
+                'p_value': did_result.get('p_value', np.nan),
+                'n_obs': did_result.get('n_obs', len(df_group)),
+                'model_estimated': did_result.get('model_estimated', True),
+                'absorbed_vars': did_result.get('absorbed_vars', []),
+                'estimation_note': did_result.get('estimation_note'),
             }
-        except Exception as e:
-            effects[f'{heterogeneity_var}_{group_val}'] = {'error': str(e)}
     
     return effects
 

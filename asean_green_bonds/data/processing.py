@@ -112,6 +112,8 @@ def merge_green_bonds(
     
     gb_agg["green_bond_issue"] = 1
     gb_agg["prop_certified"] = gb_agg["certified_proceeds"] / gb_agg["green_bond_proceeds"]
+    gb_agg["share_certified_proceeds"] = gb_agg["prop_certified"]
+    gb_agg["self_labeled_share"] = 1 - gb_agg["share_certified_proceeds"]
     gb_agg["is_certified"] = (gb_agg["prop_certified"] >= 0.5).astype(int)
     
     # Merge into panel
@@ -123,6 +125,8 @@ def merge_green_bonds(
     panel_df["green_bond_issue"] = panel_df["green_bond_issue"].fillna(0)
     panel_df["green_bond_proceeds"] = panel_df["green_bond_proceeds"].fillna(0)
     panel_df["is_certified"] = panel_df["is_certified"].fillna(0)
+    panel_df["share_certified_proceeds"] = panel_df["share_certified_proceeds"].fillna(0)
+    panel_df["self_labeled_share"] = panel_df["self_labeled_share"].fillna(0)
     
     # Create cumulative green bond dummy (ever issued)
     panel_df = panel_df.sort_values(by=["ric", "Year"])
@@ -831,13 +835,19 @@ def prepare_analysis_sample(
     if survivorship_mode == 'ignore':
         return df.copy()
     
+    # Route mode-specific kwargs to avoid passing unsupported arguments
+    exclude_keys = {'min_recent_observations', 'existence_col'}
+    weight_keys = {'early_years', 'covariates'}
+    kwargs_exclude = {k: v for k, v in kwargs.items() if k in exclude_keys}
+    kwargs_weight = {k: v for k, v in kwargs.items() if k in weight_keys}
+    
     if survivorship_mode == 'exclude':
         return filter_survived_firms(
             df,
             firm_col=firm_col,
             time_col=time_col,
             recent_years=recent_years,
-            **kwargs
+            **kwargs_exclude
         )
     
     if survivorship_mode == 'weight':
@@ -847,6 +857,6 @@ def prepare_analysis_sample(
             firm_col=firm_col,
             time_col=time_col,
             recent_years=recent_years,
-            **kwargs
+            **kwargs_weight
         )
         return df
