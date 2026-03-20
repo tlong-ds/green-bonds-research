@@ -27,7 +27,7 @@ df = data.create_lagged_features(
     df,
     firm_col='ric',
     vars_to_lag=['Firm_Size', 'Leverage', 'Asset_Turnover', 'Cash_Ratio', 'Capital_Intensity',
-                 'return_on_assets', 'esg_score'],
+                 'return_on_assets', 'Tobin_Q', 'esg_score'],
     lags=[1]
 )
 print(f"   ✓ Done: L1_Firm_Size std={df['L1_Firm_Size'].std():.4f}, unique={df['L1_Firm_Size'].nunique()}")

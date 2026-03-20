@@ -481,6 +481,7 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
     - Asset_Turnover = net_sales_or_revenues / total_assets
     - Capital_Intensity = total_assets / net_sales_or_revenues
     - Cash_Ratio = cash / current_liabilities_total
+    - Tobin_Q = (Market Capitalization + Total Liabilities) / Total Assets
     """
     df = df.copy()
     
@@ -518,6 +519,21 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
         df['cash'] / df['current_liabilities_total'],
         np.nan
     )
+
+    # Tobin's Q = (Market Value of Equity + Total Liabilities) / Total Assets
+    # Preference for market_capitalization, fallback to market_value
+    mve_col = 'market_capitalization' if 'market_capitalization' in df.columns else 'market_value'
+    
+    if mve_col in df.columns and 'total_liabilities' in df.columns and 'total_assets' in df.columns:
+        df['Tobin_Q'] = np.where(
+            (df['total_assets'] > 0) & (df['total_assets'].notna()) & (df[mve_col].notna()) & (df['total_liabilities'].notna()),
+            (df[mve_col] + df['total_liabilities']) / df['total_assets'],
+            np.nan
+        )
+        
+        # Explicitly handle extreme outliers for Tobin's Q
+        df.loc[df['Tobin_Q'] < 0, 'Tobin_Q'] = np.nan
+        df.loc[df['Tobin_Q'] > 10, 'Tobin_Q'] = 10  # Cap at 10
     
     return df
 
