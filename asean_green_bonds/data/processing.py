@@ -7,8 +7,10 @@ Functions for cleaning, merging, and engineering features from raw data.
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from typing import Optional, Tuple, List, Any
+from typing import Optional, Tuple, List, Any, Union
 from scipy.stats.mstats import winsorize
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 import warnings
 
 # Suppress only specific expected warnings
@@ -587,3 +589,264 @@ def create_lagged_features(
                 df[lagged_col] = df.groupby(firm_col)[var].shift(lag)
     
     return df
+
+
+def filter_survived_firms(
+    df: pd.DataFrame,
+    firm_col: str = 'ric',
+    time_col: str = 'Year',
+    recent_years: Optional[List[int]] = None,
+    min_recent_observations: int = 1,
+    existence_col: str = 'total_assets',
+) -> pd.DataFrame:
+    """
+    Filter panel to firms that exist in recent years (survivorship correction).
+    
+    This function identifies firms that have data in recent years and filters
+    the panel to only include those firms. Useful for ensuring analysis
+    focuses on firms that survived to the end of the sample period.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data with firm identifier and time columns.
+    firm_col : str, optional
+        Firm identifier column (default: 'ric').
+    time_col : str, optional
+        Year column (default: 'Year').
+    recent_years : list of int, optional
+        Years to check for existence (default: [2023, 2024, 2025]).
+    min_recent_observations : int, optional
+        Minimum observations in recent years to keep firm (default: 1).
+    existence_col : str, optional
+        Column to check for non-null values as existence proxy (default: 'total_assets').
+        
+    Returns
+    -------
+    pd.DataFrame
+        Filtered panel with only firms that survived to recent years.
+        
+    Examples
+    --------
+    >>> df_survived = filter_survived_firms(panel_df, recent_years=[2023, 2024])
+    """
+    if recent_years is None:
+        recent_years = [2023, 2024, 2025]
+    
+    df = df.copy()
+    
+    # Identify firms with sufficient observations in recent years
+    recent_mask = df[time_col].isin(recent_years)
+    
+    if existence_col in df.columns:
+        # Count non-null observations in recent years per firm
+        recent_obs = df[recent_mask].groupby(firm_col)[existence_col].apply(
+            lambda x: x.notna().sum()
+        )
+    else:
+        # If existence column not present, just count rows
+        recent_obs = df[recent_mask].groupby(firm_col).size()
+    
+    # Filter to firms meeting minimum threshold
+    survived_firms = recent_obs[recent_obs >= min_recent_observations].index
+    
+    return df[df[firm_col].isin(survived_firms)].copy()
+
+
+def calculate_survivorship_weights(
+    df: pd.DataFrame,
+    firm_col: str = 'ric',
+    time_col: str = 'Year',
+    recent_years: Optional[List[int]] = None,
+    early_years: Optional[List[int]] = None,
+    covariates: Optional[List[str]] = None,
+) -> pd.Series:
+    """
+    Calculate inverse probability weights for survivorship bias correction.
+    
+    Uses logistic regression to model P(survive to recent years | early characteristics).
+    Firms with lower predicted survival probability receive higher weights,
+    correcting for potential survivorship bias in the sample.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data with firm identifier and time columns.
+    firm_col : str, optional
+        Firm identifier column (default: 'ric').
+    time_col : str, optional
+        Year column (default: 'Year').
+    recent_years : list of int, optional
+        Years defining survival (default: [2023, 2024, 2025]).
+    early_years : list of int, optional
+        Years for baseline characteristics (default: [2015, 2016, 2017]).
+    covariates : list of str, optional
+        Variables to use in survival model. If None, uses financial ratios.
+        
+    Returns
+    -------
+    pd.Series
+        Weights indexed same as input df. Higher weights for firms less likely
+        to survive. Weights are normalized to have mean 1.
+        
+    Notes
+    -----
+    - Uses inverse probability weighting (IPW) approach
+    - Weights are clipped to [0.1, 10] to avoid extreme values
+    - Returns weight of 1.0 for observations where weights cannot be computed
+    """
+    if recent_years is None:
+        recent_years = [2023, 2024, 2025]
+    if early_years is None:
+        early_years = [2015, 2016, 2017]
+    if covariates is None:
+        covariates = ['total_assets', 'total_debt', 'return_on_assets']
+    
+    df = df.copy()
+    
+    # Identify which firms survived to recent years
+    recent_mask = df[time_col].isin(recent_years)
+    survived_firms = df[recent_mask][firm_col].unique()
+    
+    # Get early-period characteristics per firm
+    early_mask = df[time_col].isin(early_years)
+    early_data = df[early_mask].copy()
+    
+    # Available covariates
+    available_covs = [c for c in covariates if c in early_data.columns]
+    
+    if len(available_covs) == 0:
+        warnings.warn("No covariates available for survivorship weighting. Returning unit weights.")
+        return pd.Series(1.0, index=df.index)
+    
+    # Aggregate early characteristics per firm (mean)
+    firm_chars = early_data.groupby(firm_col)[available_covs].mean()
+    firm_chars = firm_chars.dropna()
+    
+    if len(firm_chars) < 10:
+        warnings.warn("Insufficient firms with early data for survivorship model. Returning unit weights.")
+        return pd.Series(1.0, index=df.index)
+    
+    # Create survival indicator
+    firm_chars['survived'] = firm_chars.index.isin(survived_firms).astype(int)
+    
+    # Fit logistic regression
+    X = firm_chars[available_covs].values
+    y = firm_chars['survived'].values
+    
+    # Standardize features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    try:
+        model = LogisticRegression(max_iter=1000, solver='lbfgs')
+        model.fit(X_scaled, y)
+        
+        # Predict survival probability
+        prob_survive = model.predict_proba(X_scaled)[:, 1]
+        
+        # Calculate inverse probability weights
+        # IPW = 1 / P(survive) for survivors, which upweights firms unlikely to survive
+        weights_per_firm = pd.Series(
+            1.0 / np.clip(prob_survive, 0.1, 0.99),
+            index=firm_chars.index
+        )
+        
+        # Clip extreme weights
+        weights_per_firm = weights_per_firm.clip(0.1, 10.0)
+        
+        # Normalize to mean 1
+        weights_per_firm = weights_per_firm / weights_per_firm.mean()
+        
+    except Exception as e:
+        warnings.warn(f"Survivorship model fitting failed: {e}. Returning unit weights.")
+        return pd.Series(1.0, index=df.index)
+    
+    # Map firm weights to all observations
+    weights = df[firm_col].map(weights_per_firm)
+    weights = weights.fillna(1.0)  # Default weight for firms not in early data
+    
+    return weights
+
+
+def prepare_analysis_sample(
+    df: pd.DataFrame,
+    survivorship_mode: str = 'ignore',
+    firm_col: str = 'ric',
+    time_col: str = 'Year',
+    recent_years: Optional[List[int]] = None,
+    **kwargs
+) -> pd.DataFrame:
+    """
+    Prepare analysis sample with survivorship handling.
+    
+    Provides a unified interface for applying different survivorship bias
+    correction strategies to panel data.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data with firm identifier and time columns.
+    survivorship_mode : str, optional
+        Survivorship handling mode (default: 'ignore'):
+        - 'exclude': Remove firms not in recent years
+        - 'weight': Keep all firms, add survivorship_weight column
+        - 'ignore': No survivorship handling (backward compatible)
+    firm_col : str, optional
+        Firm identifier column (default: 'ric').
+    time_col : str, optional
+        Year column (default: 'Year').
+    recent_years : list of int, optional
+        Years defining survival (default: [2023, 2024, 2025]).
+    **kwargs
+        Additional arguments passed to filter_survived_firms or
+        calculate_survivorship_weights.
+        
+    Returns
+    -------
+    pd.DataFrame
+        Prepared analysis sample. If mode is 'weight', includes
+        'survivorship_weight' column.
+        
+    Raises
+    ------
+    ValueError
+        If survivorship_mode is not one of 'exclude', 'weight', 'ignore'.
+        
+    Examples
+    --------
+    >>> # Backward compatible (no survivorship handling)
+    >>> df_analysis = prepare_analysis_sample(panel_df)
+    
+    >>> # Filter to survived firms only
+    >>> df_survived = prepare_analysis_sample(panel_df, survivorship_mode='exclude')
+    
+    >>> # Add IPW weights for survivorship correction
+    >>> df_weighted = prepare_analysis_sample(panel_df, survivorship_mode='weight')
+    """
+    valid_modes = ['exclude', 'weight', 'ignore']
+    if survivorship_mode not in valid_modes:
+        raise ValueError(f"survivorship_mode must be one of {valid_modes}, got '{survivorship_mode}'")
+    
+    if survivorship_mode == 'ignore':
+        return df.copy()
+    
+    if survivorship_mode == 'exclude':
+        return filter_survived_firms(
+            df,
+            firm_col=firm_col,
+            time_col=time_col,
+            recent_years=recent_years,
+            **kwargs
+        )
+    
+    if survivorship_mode == 'weight':
+        df = df.copy()
+        df['survivorship_weight'] = calculate_survivorship_weights(
+            df,
+            firm_col=firm_col,
+            time_col=time_col,
+            recent_years=recent_years,
+            **kwargs
+        )
+        return df

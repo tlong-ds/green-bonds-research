@@ -93,8 +93,10 @@ EVENT_STUDY_WINDOW = {
 }
 
 # PSM parameters
-PSM_CALIPER = 0.1  # Default caliper for matching
+PSM_CALIPER = 0.1  # Default caliper for matching (used when PSM_CALIPER_METHOD='fixed')
 PSM_RATIO = 4      # Ratio of controls to treated
+PSM_CALIPER_METHOD = "austin"  # 'austin' (0.25*SD), 'logit' (0.2*SD(logit)), or 'fixed'
+PSM_CALIPER_MIN = 0.01  # Minimum caliper to prevent over-restriction
 
 # Statistical significance levels
 ALPHA_SIG = 0.05     # 5% significance level
@@ -107,3 +109,31 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 # Data validation thresholds
 MIN_OBSERVATIONS = 30  # Minimum observations per group
 MAX_OUTLIER_SD = 3     # Outliers beyond 3 SD
+
+# =============================================================================
+# NEW CONFIGURATION SECTIONS (Pipeline Enhancements)
+# =============================================================================
+
+# Survivorship bias handling
+SURVIVORSHIP_CONFIG = {
+    "mode": "exclude",  # 'exclude' (drop), 'weight' (IPW), 'ignore' (no handling)
+    "recent_years": [2023, 2024, 2025],  # Years to check for firm existence
+    "min_recent_observations": 1,  # Min observations in recent years to keep firm
+    "existence_col": "total_assets",  # Column to check for non-null as existence proxy
+}
+
+# System GMM estimation parameters
+GMM_CONFIG = {
+    "max_lags": 3,  # Maximum lags for automatic instrument selection
+    "collapse_instruments": True,  # Collapse instruments to reduce count
+    "robust_se": True,  # Use robust standard errors
+    "ar_test_order": 2,  # Order for Arellano-Bond AR test (should be insignificant)
+}
+
+# ESG data gap handling (tiered authenticity scoring)
+ESG_FALLBACK_CONFIG = {
+    "tier1_min_obs": 2,  # Minimum pre/post ESG observations for Tier 1 (full analysis)
+    "tier2_min_obs": 1,  # Minimum observations for Tier 2 (partial analysis)
+    "tier3_cap_score": 60,  # Maximum authenticity score for Tier 3 (certification only)
+    "default_fallback": "tiered",  # 'strict', 'tiered', or 'certification_only'
+}

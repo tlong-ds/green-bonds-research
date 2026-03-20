@@ -30,6 +30,9 @@ from .processing import (
     encode_categorical_features,
     create_financial_ratios,
     create_lagged_features,
+    filter_survived_firms,
+    calculate_survivorship_weights,
+    prepare_analysis_sample,
 )
 
 from .feature_selection import (
@@ -68,6 +71,9 @@ __all__ = [
     "encode_categorical_features",
     "create_financial_ratios",
     "create_lagged_features",
+    "filter_survived_firms",
+    "calculate_survivorship_weights",
+    "prepare_analysis_sample",
     # Feature Selection
     "calculate_vif",
     "correlation_filter",

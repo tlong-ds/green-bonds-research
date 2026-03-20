@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from typing import Tuple, Optional, Dict, List, Any
+from typing import Tuple, Optional, Dict, List, Any, Union
 import warnings
 
 # Suppress only specific expected warnings, not all
@@ -70,6 +70,125 @@ def estimate_propensity_scores(
     result.loc[df_ps.index] = ps
     
     return result
+
+
+def calculate_optimal_caliper(
+    propensity_scores: pd.Series,
+    method: str = 'austin',
+) -> float:
+    """
+    Calculate optimal caliper based on propensity score distribution.
+    
+    Parameters
+    ----------
+    propensity_scores : pd.Series
+        Series of propensity scores.
+    method : str
+        'austin' - 0.25 * SD(propensity_score) [Austin 2011]
+        'logit' - 0.2 * SD(logit(PS)) 
+        'rosenbaum' - 0.25 * SD(PS) pooled across groups
+    
+    Returns
+    -------
+    float
+        Optimal caliper value (minimum 0.01).
+        
+    Notes
+    -----
+    Austin (2011) "Optimal caliper widths for propensity-score matching"
+    recommends 0.2 * SD(logit(PS)), but 0.25 * SD(PS) is simpler and works well.
+    """
+    MIN_CALIPER = 0.01
+    
+    ps = propensity_scores.dropna()
+    
+    if len(ps) < 2:
+        return MIN_CALIPER
+    
+    # Handle edge case: all same PS values
+    if ps.std() == 0 or np.isnan(ps.std()):
+        return MIN_CALIPER
+    
+    if method == 'austin':
+        # Austin (2011) simplified: 0.25 * SD(PS)
+        caliper = 0.25 * ps.std()
+        
+    elif method == 'logit':
+        # Austin (2011) recommended: 0.2 * SD(logit(PS))
+        # Clip to avoid log(0) and log(1)
+        ps_clipped = ps.clip(lower=1e-6, upper=1 - 1e-6)
+        logit_ps = np.log(ps_clipped / (1 - ps_clipped))
+        caliper = 0.2 * logit_ps.std()
+        
+    elif method == 'rosenbaum':
+        # Rosenbaum & Rubin: 0.25 * pooled SD(PS)
+        caliper = 0.25 * ps.std()
+        
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'austin', 'logit', or 'rosenbaum'.")
+    
+    # Enforce minimum caliper to prevent over-restriction
+    return max(caliper, MIN_CALIPER)
+
+
+def trim_extreme_propensity_scores(
+    df: pd.DataFrame,
+    ps_col: str = 'propensity_score',
+    treatment_col: str = 'green_bond_issue',
+    method: str = 'crump',
+    alpha: float = 0.1,
+) -> pd.DataFrame:
+    """
+    Trim observations with extreme propensity scores to improve common support.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data with propensity scores.
+    ps_col : str
+        Propensity score column name (default: 'propensity_score').
+    treatment_col : str
+        Treatment column name (default: 'green_bond_issue').
+    method : str
+        'crump' - Crump et al. (2009) optimal trimming rule
+        'percentile' - Trim below alpha and above 1-alpha percentiles
+    alpha : float
+        For 'percentile' method, trim below alpha and above 1-alpha.
+        For 'crump', this is the threshold for optimal trimming.
+    
+    Returns
+    -------
+    pd.DataFrame
+        Trimmed dataset with extreme propensity scores removed.
+        
+    Notes
+    -----
+    Crump et al. (2009) "Dealing with limited overlap in estimation of
+    average treatment effects" recommends trimming observations where
+    PS < alpha or PS > (1 - alpha), with alpha typically ~0.1.
+    """
+    df = df.copy()
+    ps = df[ps_col]
+    
+    if method == 'crump':
+        # Crump et al. (2009): trim where PS < alpha or PS > 1-alpha
+        # Default alpha=0.1 gives common support [0.1, 0.9]
+        lower_bound = alpha
+        upper_bound = 1 - alpha
+        
+    elif method == 'percentile':
+        # Percentile-based trimming
+        lower_bound = ps.quantile(alpha)
+        upper_bound = ps.quantile(1 - alpha)
+        
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'crump' or 'percentile'.")
+    
+    # Apply trimming
+    mask = (ps >= lower_bound) & (ps <= upper_bound)
+    trimmed_df = df[mask].copy()
+    
+    return trimmed_df
 
 
 def check_common_support(
@@ -138,7 +257,7 @@ def nearest_neighbor_matching(
     df: pd.DataFrame,
     ps_col: str = 'propensity_score',
     treatment_col: str = 'green_bond_issue',
-    caliper: float = 0.1,
+    caliper: Union[float, str] = 0.1,
     ratio: int = 1,
     replacement: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
@@ -153,8 +272,10 @@ def nearest_neighbor_matching(
         Propensity score column name (default: 'propensity_score').
     treatment_col : str, optional
         Treatment column name (default: 'green_bond_issue').
-    caliper : float, optional
+    caliper : float or 'auto', optional
         Maximum PS distance for match (default: 0.1).
+        If 'auto', uses calculate_optimal_caliper() with 'austin' method.
+        If float, uses fixed caliper value.
     ratio : int, optional
         Number of controls per treated unit (default: 1).
     replacement : bool, optional
@@ -174,6 +295,13 @@ def nearest_neighbor_matching(
     
     treated_ps = df.loc[treated_idx, ps_col]
     control_ps = df.loc[control_idx, ps_col]
+    
+    # Handle 'auto' caliper
+    if caliper == 'auto':
+        all_ps = df[ps_col].dropna()
+        caliper = calculate_optimal_caliper(all_ps, method='austin')
+    else:
+        caliper = float(caliper)
     
     matched_rows = []
     unmatched_treated = 0

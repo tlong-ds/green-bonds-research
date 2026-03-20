@@ -239,5 +239,205 @@ class TestDataValidation:
         assert len(outliers['value']) > 0
 
 
+class TestSurvivorshipBias:
+    """Tests for survivorship bias functions."""
+    
+    def setup_method(self):
+        """Setup synthetic panel data with survivorship patterns."""
+        np.random.seed(42)
+        
+        # Create panel with some firms that "die" (no recent data)
+        firms_survived = ['SURV_A', 'SURV_B', 'SURV_C', 'SURV_D', 'SURV_E']
+        firms_died = ['DEAD_X', 'DEAD_Y', 'DEAD_Z']
+        
+        all_years = list(range(2015, 2026))
+        early_years = list(range(2015, 2020))
+        
+        data_rows = []
+        
+        # Survived firms: have data in all years including recent
+        for firm in firms_survived:
+            for year in all_years:
+                data_rows.append({
+                    'ric': firm,
+                    'Year': year,
+                    'total_assets': np.random.uniform(1e6, 1e9),
+                    'total_debt': np.random.uniform(1e5, 1e8),
+                    'return_on_assets': np.random.normal(0.05, 0.02),
+                })
+        
+        # Dead firms: only have data in early years
+        for firm in firms_died:
+            for year in early_years:
+                data_rows.append({
+                    'ric': firm,
+                    'Year': year,
+                    'total_assets': np.random.uniform(1e5, 1e7),  # Smaller firms
+                    'total_debt': np.random.uniform(1e4, 1e6),
+                    'return_on_assets': np.random.normal(0.02, 0.03),  # Lower ROA
+                })
+        
+        self.df = pd.DataFrame(data_rows)
+        self.firms_survived = firms_survived
+        self.firms_died = firms_died
+    
+    def test_filter_survived_firms_basic(self):
+        """Test that filter_survived_firms removes firms without recent data."""
+        df_filtered = data.filter_survived_firms(
+            self.df,
+            recent_years=[2023, 2024, 2025],
+            min_recent_observations=1
+        )
+        
+        # Should only contain survived firms
+        remaining_firms = df_filtered['ric'].unique()
+        assert all(firm in self.firms_survived for firm in remaining_firms)
+        assert not any(firm in self.firms_died for firm in remaining_firms)
+    
+    def test_filter_survived_firms_custom_years(self):
+        """Test filter_survived_firms with custom recent years."""
+        df_filtered = data.filter_survived_firms(
+            self.df,
+            recent_years=[2024, 2025],
+            min_recent_observations=2
+        )
+        
+        # Should require at least 2 observations in 2024-2025
+        remaining_firms = df_filtered['ric'].unique()
+        assert all(firm in self.firms_survived for firm in remaining_firms)
+    
+    def test_filter_survived_firms_preserves_all_years(self):
+        """Test that filter preserves historical data for survived firms."""
+        df_filtered = data.filter_survived_firms(
+            self.df,
+            recent_years=[2023, 2024, 2025]
+        )
+        
+        # Should have historical data for survived firms
+        for firm in self.firms_survived:
+            firm_data = df_filtered[df_filtered['ric'] == firm]
+            assert 2015 in firm_data['Year'].values
+            assert 2025 in firm_data['Year'].values
+    
+    def test_filter_survived_firms_no_existence_col(self):
+        """Test filter when existence_col not present."""
+        df_no_col = self.df.drop(columns=['total_assets'])
+        
+        df_filtered = data.filter_survived_firms(
+            df_no_col,
+            recent_years=[2023, 2024, 2025],
+            existence_col='total_assets'  # Not in df
+        )
+        
+        # Should still work by counting rows
+        remaining_firms = df_filtered['ric'].unique()
+        assert all(firm in self.firms_survived for firm in remaining_firms)
+    
+    def test_calculate_survivorship_weights_returns_series(self):
+        """Test that weight calculation returns properly indexed Series."""
+        weights = data.calculate_survivorship_weights(
+            self.df,
+            recent_years=[2023, 2024, 2025],
+            early_years=[2015, 2016, 2017]
+        )
+        
+        assert isinstance(weights, pd.Series)
+        assert len(weights) == len(self.df)
+        assert weights.index.equals(self.df.index)
+    
+    def test_calculate_survivorship_weights_valid_range(self):
+        """Test that weights are in valid range (0 < w ≤ 10 after clipping)."""
+        weights = data.calculate_survivorship_weights(
+            self.df,
+            recent_years=[2023, 2024, 2025],
+            early_years=[2015, 2016, 2017]
+        )
+        
+        assert (weights > 0).all()
+        assert (weights <= 10).all()
+    
+    def test_calculate_survivorship_weights_mean_approximately_one(self):
+        """Test that weights are normalized to mean approximately 1."""
+        # Create larger sample for more stable weights
+        np.random.seed(123)
+        firms = [f'FIRM_{i}' for i in range(20)]
+        years = list(range(2015, 2026))
+        
+        data_rows = []
+        for i, firm in enumerate(firms):
+            # Some firms survive (have 2023+ data), some don't
+            max_year = 2025 if i < 15 else 2020
+            for year in [y for y in years if y <= max_year]:
+                data_rows.append({
+                    'ric': firm,
+                    'Year': year,
+                    'total_assets': np.random.uniform(1e6, 1e9),
+                    'total_debt': np.random.uniform(1e5, 1e8),
+                    'return_on_assets': np.random.normal(0.05, 0.02),
+                })
+        
+        df_large = pd.DataFrame(data_rows)
+        weights = data.calculate_survivorship_weights(
+            df_large,
+            recent_years=[2023, 2024, 2025],
+            early_years=[2015, 2016, 2017]
+        )
+        
+        # Mean should be close to 1 (within tolerance due to clipping/normalization)
+        assert 0.5 < weights.mean() < 2.0
+    
+    def test_prepare_analysis_sample_ignore_mode(self):
+        """Test that 'ignore' mode returns copy of original data."""
+        df_result = data.prepare_analysis_sample(
+            self.df,
+            survivorship_mode='ignore'
+        )
+        
+        # Should be same shape as input
+        assert len(df_result) == len(self.df)
+        assert list(df_result.columns) == list(self.df.columns)
+    
+    def test_prepare_analysis_sample_exclude_mode(self):
+        """Test that 'exclude' mode filters to survived firms."""
+        df_result = data.prepare_analysis_sample(
+            self.df,
+            survivorship_mode='exclude',
+            recent_years=[2023, 2024, 2025]
+        )
+        
+        # Should only have survived firms
+        remaining_firms = df_result['ric'].unique()
+        assert all(firm in self.firms_survived for firm in remaining_firms)
+    
+    def test_prepare_analysis_sample_weight_mode(self):
+        """Test that 'weight' mode adds survivorship_weight column."""
+        df_result = data.prepare_analysis_sample(
+            self.df,
+            survivorship_mode='weight',
+            recent_years=[2023, 2024, 2025]
+        )
+        
+        # Should have all original rows plus weight column
+        assert len(df_result) == len(self.df)
+        assert 'survivorship_weight' in df_result.columns
+        assert (df_result['survivorship_weight'] > 0).all()
+    
+    def test_prepare_analysis_sample_invalid_mode(self):
+        """Test that invalid mode raises ValueError."""
+        with pytest.raises(ValueError, match="survivorship_mode must be one of"):
+            data.prepare_analysis_sample(
+                self.df,
+                survivorship_mode='invalid_mode'
+            )
+    
+    def test_prepare_analysis_sample_default_backward_compatible(self):
+        """Test that default behavior matches old behavior (no filtering)."""
+        df_result = data.prepare_analysis_sample(self.df)
+        
+        # Default should be 'ignore' - same as original
+        assert len(df_result) == len(self.df)
+        assert 'survivorship_weight' not in df_result.columns
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

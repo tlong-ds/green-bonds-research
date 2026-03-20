@@ -20,7 +20,7 @@ import pandas as pd
 import numpy as np
 
 
-def compute_authenticity_score(df):
+def compute_authenticity_score(df, tier3_cap_score: int = None):
     """
     Compute a composite authenticity score combining all verification indicators.
     
@@ -39,6 +39,14 @@ def compute_authenticity_score(df):
         - issuer_type: Issuer type (used for verification)
         - issuer_track_record: Track record indicator (binary or continuous)
         - has_green_framework: Binary flag (1=has framework, 0=not)
+        
+        Optional columns (for tiered scoring):
+        - authenticity_tier: Tier assignment (1, 2, or 3)
+        - tier3_cap_score: Per-row cap for Tier 3 bonds (overrides tier3_cap_score param)
+    
+    tier3_cap_score : int, optional
+        Maximum score for Tier 3 bonds (no ESG data). If not provided,
+        uses 'tier3_cap_score' column if present, otherwise defaults to 60.
     
     Returns
     -------
@@ -49,15 +57,35 @@ def compute_authenticity_score(df):
         - issuer_component: Issuer verification score (0-25)
         - authenticity_score: Final composite score (0-100)
         - authenticity_category: Category label (High/Medium/Low/Unverified)
+        - authenticity_tier: Tier assignment (1, 2, or 3) - preserved if input
     
     Notes
     -----
     Missing values are treated as 0 (no verification). NaN values in boolean/flag
     columns are treated as False (0).
+    
+    Tiered Scoring Adjustments:
+    - Tier 1 (Complete): Full score range (0-100)
+    - Tier 2 (Partial): ESG component capped at 20 (instead of 40) due to lower confidence
+    - Tier 3 (Certification Only): ESG component = 0, total score capped at tier3_cap_score
     """
     
     # Create a working copy to avoid modifying the original
     result_df = df.copy()
+    
+    # Determine tier information
+    has_tier_info = 'authenticity_tier' in result_df.columns
+    if not has_tier_info:
+        # Default to Tier 1 (original behavior) if no tier info
+        result_df['authenticity_tier'] = 1
+    
+    # Determine tier3 cap
+    if 'tier3_cap_score' in result_df.columns:
+        tier3_caps = result_df['tier3_cap_score'].fillna(60)
+    elif tier3_cap_score is not None:
+        tier3_caps = pd.Series(tier3_cap_score, index=result_df.index)
+    else:
+        tier3_caps = pd.Series(60, index=result_df.index)
     
     # Fill NaN values appropriately for each column
     cols_to_fill = {
@@ -98,6 +126,15 @@ def compute_authenticity_score(df):
     # Cap at 40 points
     esg_component = esg_component.clip(0, 40)
     
+    # Apply tier adjustments to ESG component:
+    # - Tier 2: Cap ESG component at 20 (lower confidence)
+    # - Tier 3: Set ESG component to 0 (no ESG data)
+    tier2_mask = result_df['authenticity_tier'] == 2
+    tier3_mask = result_df['authenticity_tier'] == 3
+    
+    esg_component = esg_component.where(~tier2_mask, esg_component.clip(0, 20))
+    esg_component = esg_component.where(~tier3_mask, 0)
+    
     # ========== Certification Component (0-35 points) ==========
     cert_component = pd.Series(0, index=result_df.index, dtype=float)
     
@@ -130,6 +167,14 @@ def compute_authenticity_score(df):
     
     # ========== Final Score ==========
     authenticity_score = esg_component + cert_component + issuer_component
+    
+    # Apply tier3 cap: Tier 3 bonds cannot exceed their cap score
+    # This ensures certification-only bonds have bounded authenticity
+    tier3_mask = result_df['authenticity_tier'] == 3
+    authenticity_score = authenticity_score.where(
+        ~tier3_mask, 
+        authenticity_score.clip(upper=tier3_caps)
+    )
     
     # Create category labels
     def categorize_score(score):

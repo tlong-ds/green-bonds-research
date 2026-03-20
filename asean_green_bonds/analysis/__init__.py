@@ -10,6 +10,8 @@ Submodules:
 
 from .propensity_score import (
     estimate_propensity_scores,
+    calculate_optimal_caliper,
+    trim_extreme_propensity_scores,
     check_common_support,
     nearest_neighbor_matching,
     assess_balance,
@@ -40,9 +42,19 @@ from .diagnostics import (
     run_diagnostics_battery,
 )
 
+from .gmm import (
+    estimate_system_gmm,
+    arellano_bond_test,
+    sargan_hansen_test,
+    select_gmm_instruments,
+    run_gmm_robustness,
+)
+
 __all__ = [
     # Propensity Score
     "estimate_propensity_scores",
+    "calculate_optimal_caliper",
+    "trim_extreme_propensity_scores",
     "check_common_support",
     "nearest_neighbor_matching",
     "assess_balance",
@@ -65,4 +77,10 @@ __all__ = [
     "specification_sensitivity",
     "heterogeneous_effects_analysis",
     "run_diagnostics_battery",
+    # GMM
+    "estimate_system_gmm",
+    "arellano_bond_test",
+    "sargan_hansen_test",
+    "select_gmm_instruments",
+    "run_gmm_robustness",
 ]
