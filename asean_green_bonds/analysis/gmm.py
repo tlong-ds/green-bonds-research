@@ -84,6 +84,7 @@ def _prepare_gmm_data(
     control_vars: Optional[List[str]],
     instruments: Optional[List[str]],
     max_lags: int,
+    min_obs_fraction: float = 0.3,
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Prepare data for GMM estimation.
@@ -108,7 +109,7 @@ def _prepare_gmm_data(
     # Select or generate instruments
     if instruments is None:
         instruments = select_gmm_instruments(
-            df, outcome, entity_col, time_col, max_lags
+            df, outcome, entity_col, time_col, max_lags, min_obs_fraction
         )
     
     if len(instruments) == 0:
@@ -327,6 +328,7 @@ def estimate_system_gmm(
     control_vars: Optional[List[str]] = None,
     instruments: Optional[List[str]] = None,
     max_lags: int = 2,
+    min_obs_fraction: float = 0.3,
 ) -> Dict[str, Any]:
     """
     Estimate System GMM model for dynamic panel.
@@ -352,6 +354,9 @@ def estimate_system_gmm(
         Custom instruments (if None, uses automatic lag selection).
     max_lags : int, optional
         Maximum lags for automatic instrument generation (default: 2).
+    min_obs_fraction : float, optional
+        Minimum non-missing fraction for lag instrument retention when
+        instruments are auto-generated (default: 0.3).
         
     Returns
     -------
@@ -383,7 +388,7 @@ def estimate_system_gmm(
     # Prepare data
     df_prep, error = _prepare_gmm_data(
         df, outcome, treatment_col, entity_col, time_col,
-        control_vars, instruments, max_lags
+        control_vars, instruments, max_lags, min_obs_fraction
     )
     
     if error is not None:

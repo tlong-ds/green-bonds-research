@@ -87,7 +87,7 @@ def compute_authenticity_score(df, tier3_cap_score: int = None):
     else:
         tier3_caps = pd.Series(60, index=result_df.index)
     
-    # Fill NaN values appropriately for each column
+    # Fill NaN values appropriately for each column (create if missing)
     cols_to_fill = {
         'is_authentic': 0,
         'esg_improvement': 0,
@@ -96,12 +96,15 @@ def compute_authenticity_score(df, tier3_cap_score: int = None):
         'is_icma_certified': 0,
         'icma_confidence': 0,
         'issuer_track_record': 0,
-        'has_green_framework': 0
+        'has_green_framework': 0,
+        'authenticity_tier': 3,  # Default to Tier 3
     }
     
     for col, fill_value in cols_to_fill.items():
         if col in result_df.columns:
             result_df[col] = result_df[col].fillna(fill_value)
+        else:
+            result_df[col] = fill_value
     
     # Verify issuer verification: issuer nation must match
     # If issuer_nation is present and matches Issuer/Borrower Nation, count as verified
