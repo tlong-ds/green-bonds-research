@@ -10,8 +10,30 @@ import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 from scipy import stats
 import warnings
+from ..config import GMM_CONFIG, SURVIVORSHIP_CONFIG
 
 warnings.filterwarnings('ignore', category=FutureWarning, module='linearmodels')
+
+
+def _collapse_instrument_list(instruments: List[str]) -> List[str]:
+    """
+    Collapse lag instruments by keeping the smallest lag per base variable.
+    Example: L2_outcome, L3_outcome -> L2_outcome.
+    """
+    selected: Dict[str, Tuple[int, str]] = {}
+    for inst in instruments:
+        if not inst.startswith("L") or "_" not in inst:
+            selected.setdefault(inst, (10**9, inst))
+            continue
+        lag_part, base = inst.split("_", 1)
+        try:
+            lag_num = int(lag_part[1:])
+        except ValueError:
+            selected.setdefault(inst, (10**9, inst))
+            continue
+        if base not in selected or lag_num < selected[base][0]:
+            selected[base] = (lag_num, inst)
+    return [v[1] for v in selected.values()]
 
 
 def select_gmm_instruments(
@@ -360,12 +382,12 @@ def estimate_system_gmm(
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     instruments: Optional[List[str]] = None,
-    max_lags: int = 2,
+    max_lags: Optional[int] = None,
     min_obs_fraction: float = 0.3,
     endogenous_treatment: bool = False,
     max_instruments: Optional[int] = 20,
     cov_type: str = 'clustered',
-    survivorship_mode: str = 'ignore',
+    survivorship_mode: Optional[str] = None,
     survivorship_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -419,15 +441,30 @@ def estimate_system_gmm(
         - n_obs, n_instruments
         - error (if estimation fails)
     """
+    if max_lags is None:
+        max_lags = int(GMM_CONFIG.get("max_lags", 2))
+    if survivorship_mode is None:
+        survivorship_mode = SURVIVORSHIP_CONFIG.get("mode", "ignore")
+
+    def _error_result(message: str, n_obs: int = 0, n_instruments: Optional[int] = None) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            'error': message,
+            'outcome': outcome,
+            'n_obs': n_obs,
+            'cov_type_requested': cov_type,
+            'cov_type_used': cov_type if cov_type in {'clustered', 'robust'} else 'robust',
+            'covariance_warning': None,
+            'survivorship_mode': survivorship_mode,
+        }
+        if n_instruments is not None:
+            result['n_instruments'] = n_instruments
+        return result
+
     # Import here to handle import errors gracefully
     try:
         from linearmodels.iv import IVGMM
     except ImportError:
-        return {
-            'error': 'linearmodels not installed. Run: pip install linearmodels',
-            'outcome': outcome,
-            'n_obs': 0,
-        }
+        return _error_result('linearmodels not installed. Run: pip install linearmodels', n_obs=0)
     
     # Default control variables
     if control_vars is None:
@@ -457,11 +494,7 @@ def estimate_system_gmm(
     )
     
     if error is not None:
-        return {
-            'error': error,
-            'outcome': outcome,
-            'n_obs': 0,
-        }
+        return _error_result(error, n_obs=0)
     
     # Get metadata
     instr_cols = df_prep.attrs.get('instruments', [])
@@ -475,9 +508,7 @@ def estimate_system_gmm(
     if treatment_col in df_reg.columns:
         if df_reg[treatment_col].var() < 1e-10:
             return {
-                'error': f"Treatment variable '{treatment_col}' has no variation",
-                'outcome': outcome,
-                'n_obs': len(df_reg),
+                **_error_result(f"Treatment variable '{treatment_col}' has no variation", n_obs=len(df_reg)),
             }
     
     # Build regression components
@@ -500,11 +531,7 @@ def estimate_system_gmm(
     exog_cols = [c for c in exog_cols if c in df_reg.columns]
     
     if len(exog_cols) == 0:
-        return {
-            'error': 'No exogenous variables available',
-            'outcome': outcome,
-            'n_obs': len(df_reg),
-        }
+        return _error_result('No exogenous variables available', n_obs=len(df_reg))
     
     exog = df_reg[exog_cols]
     
@@ -516,12 +543,10 @@ def estimate_system_gmm(
     instr_cols_valid = [c for c in instr_cols if c in df_reg.columns]
     if max_instruments is not None and max_instruments > 0:
         instr_cols_valid = instr_cols_valid[:max_instruments]
+    if bool(GMM_CONFIG.get("collapse_instruments", False)):
+        instr_cols_valid = _collapse_instrument_list(instr_cols_valid)
     if len(instr_cols_valid) == 0:
-        return {
-            'error': 'No valid instruments in data',
-            'outcome': outcome,
-            'n_obs': len(df_reg),
-        }
+        return _error_result('No valid instruments in data', n_obs=len(df_reg))
     
     instruments_df = df_reg[instr_cols_valid]
     
@@ -540,11 +565,7 @@ def estimate_system_gmm(
         endog_clean = None
     
     if len(y_clean) < 20:
-        return {
-            'error': f"Insufficient observations after cleaning: {len(y_clean)}",
-            'outcome': outcome,
-            'n_obs': len(y_clean),
-        }
+        return _error_result(f"Insufficient observations after cleaning: {len(y_clean)}", n_obs=len(y_clean))
     
     # Estimate GMM model
     try:
@@ -584,17 +605,12 @@ def estimate_system_gmm(
         error_msg = str(e)
         # Common error handling
         if 'singular' in error_msg.lower() or 'rank' in error_msg.lower():
-            return {
-                'error': f"Matrix singularity issue: {error_msg}",
-                'outcome': outcome,
-                'n_obs': len(y_clean),
-                'n_instruments': len(instr_cols_valid),
-            }
-        return {
-            'error': f"GMM estimation failed: {error_msg}",
-            'outcome': outcome,
-            'n_obs': len(y_clean),
-        }
+            return _error_result(
+                f"Matrix singularity issue: {error_msg}",
+                n_obs=len(y_clean),
+                n_instruments=len(instr_cols_valid),
+            )
+        return _error_result(f"GMM estimation failed: {error_msg}", n_obs=len(y_clean))
     
     # Extract treatment coefficient
     if treatment_col in results.params.index:
@@ -603,11 +619,10 @@ def estimate_system_gmm(
         t_stat = results.tstats[treatment_col]
         p_value = results.pvalues[treatment_col]
     else:
-        return {
-            'error': f"Treatment variable '{treatment_col}' not found in results",
-            'outcome': outcome,
-            'n_obs': len(y_clean),
-        }
+        return _error_result(
+            f"Treatment variable '{treatment_col}' not found in results",
+            n_obs=len(y_clean),
+        )
     
     # Get residuals for diagnostic tests
     residuals = results.resids

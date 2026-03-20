@@ -10,6 +10,7 @@ from linearmodels.panel import PanelOLS, FirstDifferenceOLS
 from linearmodels.panel.utility import AbsorbingEffectWarning
 from typing import Tuple, Optional, List, Dict, Any
 import warnings
+from ..config import SURVIVORSHIP_CONFIG
 
 # Suppress only specific expected warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='linearmodels')
@@ -103,6 +104,8 @@ def estimate_did(
     dict
         Regression results including coefficient, std error, t-stat, p-value.
     """
+    cov_requested = 'clustered' if cluster_entity else 'robust'
+
     if survivorship_kwargs is None:
         survivorship_kwargs = {}
     
@@ -148,6 +151,9 @@ def estimate_did(
             'outcome': outcome,
             'specification': specification,
             'n_obs': 0,
+            'cov_type_requested': cov_requested,
+            'cov_type_used': cov_requested,
+            'covariance_warning': None,
         }
     
     # Check if outcome variable exists
@@ -158,6 +164,9 @@ def estimate_did(
             'specification': specification,
             'n_obs': 0,
             'available_columns': list(df_reg.columns[:20]),  # Show first 20 columns for debugging
+            'cov_type_requested': cov_requested,
+            'cov_type_used': cov_requested,
+            'covariance_warning': None,
         }
     
     required_cols = [*regressors, outcome]
@@ -174,6 +183,9 @@ def estimate_did(
             'outcome': outcome,
             'specification': specification,
             'n_obs': len(df_clean),
+            'cov_type_requested': cov_requested,
+            'cov_type_used': cov_requested,
+            'covariance_warning': None,
         }
     
     X = df_clean[regressors]
@@ -236,6 +248,9 @@ def estimate_did(
                 'outcome': outcome,
                 'specification': specification,
                 'n_obs': len(y),
+                'cov_type_requested': cov_requested,
+                'cov_type_used': cov_requested,
+                'covariance_warning': None,
             }
     
     n_entities = len(df_reg.index.get_level_values(0).unique())
@@ -243,6 +258,7 @@ def estimate_did(
 
     def _build_absorbed_result(absorbed_vars: Optional[List[str]] = None, note: Optional[str] = None) -> Dict[str, Any]:
         absorbed_list = list(dict.fromkeys(absorbed_vars or regressors))
+        cov_requested = 'clustered' if cluster_entity else 'robust'
         return {
             'outcome': outcome,
             'treatment': treatment_col,
@@ -265,11 +281,16 @@ def estimate_did(
             'model_estimated': False,
             'estimation_note': note or 'all_exogenous_variables_absorbed',
             'survivorship_mode': survivorship_mode,
+            'cov_type_requested': cov_requested,
+            'cov_type_used': cov_requested,
+            'covariance_warning': None,
         }
 
     # Fit model based on specification
-    cov_type = 'clustered' if cluster_entity else 'robust'
+    cov_type = cov_requested
     cov_kwargs = {'cluster_entity': True} if cluster_entity else {}
+    cov_used = cov_type
+    cov_warning = None
     
     try:
         if specification == 'entity_fe':
@@ -306,6 +327,9 @@ def estimate_did(
             'outcome': outcome,
             'specification': specification,
             'n_obs': len(y),
+            'cov_type_requested': cov_requested,
+            'cov_type_used': cov_requested,
+            'covariance_warning': None,
         }
     
     # Estimate
@@ -321,6 +345,8 @@ def estimate_did(
             # Fallback when clustered covariance fails due degenerate clusters.
             try:
                 results = model.fit(cov_type='robust')
+                cov_used = 'robust'
+                cov_warning = "Clustered covariance unavailable for PanelOLS; used robust instead."
             except Exception as e2:
                 err2 = str(e2).lower()
                 if 'float division by zero' in err2 or 'division by zero' in err2:
@@ -332,6 +358,9 @@ def estimate_did(
                     'outcome': outcome,
                     'specification': specification,
                     'n_obs': len(y),
+                    'cov_type_requested': cov_requested,
+                    'cov_type_used': 'robust',
+                    'covariance_warning': "Clustered covariance unavailable for PanelOLS; robust fallback failed.",
                 }
         else:
             return {
@@ -339,6 +368,9 @@ def estimate_did(
                 'outcome': outcome,
                 'specification': specification,
                 'n_obs': len(y),
+                'cov_type_requested': cov_requested,
+                'cov_type_used': cov_requested,
+                'covariance_warning': None,
             }
     
     model_exog = getattr(results.model, "exog", None)
@@ -388,6 +420,9 @@ def estimate_did(
         'model_estimated': True,
         'estimation_note': None,
         'survivorship_mode': survivorship_mode,
+        'cov_type_requested': cov_type,
+        'cov_type_used': cov_used,
+        'covariance_warning': cov_warning,
     }
 
 
@@ -399,7 +434,7 @@ def run_multiple_outcomes(
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     specifications: Optional[List[str]] = None,
-    survivorship_mode: str = 'ignore',
+    survivorship_mode: Optional[str] = None,
     survivorship_kwargs: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """
@@ -433,6 +468,8 @@ def run_multiple_outcomes(
     """
     if specifications is None:
         specifications = ['entity_fe', 'time_fe', 'twoway_fe', 'none']
+    if survivorship_mode is None:
+        survivorship_mode = SURVIVORSHIP_CONFIG.get('mode', 'ignore')
     
     results = []
     errors = []
@@ -605,6 +642,9 @@ def parallel_trends_test(
         'absorbed_vars': [],
         'model_estimated': False,
         'estimation_note': None,
+        'cov_type_requested': 'clustered',
+        'cov_type_used': 'clustered',
+        'covariance_warning': None,
     }
     
     if df_aligned.empty:
@@ -627,6 +667,10 @@ def parallel_trends_test(
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore', AbsorbingEffectWarning)
                     results = model.fit(cov_type='robust')
+                pt_results['cov_type_used'] = 'robust'
+                pt_results['covariance_warning'] = (
+                    "Clustered covariance unavailable for PanelOLS; used robust instead."
+                )
             except Exception as e2:
                 pt_results['estimation_note'] = str(e2)
                 return pt_results

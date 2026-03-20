@@ -115,7 +115,29 @@ def load_market_data() -> pd.DataFrame:
     return market_data
 
 
-def load_green_bonds_data(asean_only: bool = True) -> pd.DataFrame:
+def _load_processed_certification_flags() -> Optional[pd.DataFrame]:
+    """Load processed certification flags keyed by Deal PermID when available."""
+    cert_file = PROCESSED_DATA_FILES["cleaned"].parent / "bonds_with_icma_certification.csv"
+    if not cert_file.exists():
+        return None
+    cert_df = pd.read_csv(cert_file)
+    required = {"Deal PermID", "is_cbi_certified", "is_icma_certified"}
+    if not required.issubset(cert_df.columns):
+        return None
+    cert_df = cert_df[list(required)].copy()
+    cert_df["Deal PermID"] = pd.to_numeric(cert_df["Deal PermID"], errors="coerce")
+    cert_df["is_cbi_certified"] = pd.to_numeric(cert_df["is_cbi_certified"], errors="coerce").fillna(0)
+    cert_df["is_icma_certified"] = pd.to_numeric(cert_df["is_icma_certified"], errors="coerce").fillna(0)
+    cert_df["is_certified_processed"] = (
+        (cert_df["is_cbi_certified"] > 0) | (cert_df["is_icma_certified"] > 0)
+    ).astype(int)
+    return cert_df[["Deal PermID", "is_certified_processed"]]
+
+
+def load_green_bonds_data(
+    asean_only: bool = True,
+    use_processed_certification: bool = True,
+) -> pd.DataFrame:
     """
     Load green bonds issuance data.
     
@@ -146,9 +168,20 @@ def load_green_bonds_data(asean_only: bool = True) -> pd.DataFrame:
     # Extract issue year
     gb["Year"] = pd.to_datetime(gb["Dates: Issue Date"]).dt.year
     
-    # Create certification indicator
-    # Green bonds labeled "Green Bond Purposes" are CBI-certified
-    gb['is_certified'] = gb['Primary Use Of Proceeds'].eq('Green Bond Purposes').astype(int)
+    # Baseline certification indicator from raw label proxy
+    gb["is_certified"] = gb["Primary Use Of Proceeds"].eq("Green Bond Purposes").astype(int)
+
+    # Optional override/enrichment from processed certification file.
+    if use_processed_certification and "Deal PermID" in gb.columns:
+        cert_flags = _load_processed_certification_flags()
+        if cert_flags is not None:
+            gb["Deal PermID"] = pd.to_numeric(gb["Deal PermID"], errors="coerce")
+            gb = gb.merge(cert_flags, on="Deal PermID", how="left")
+            gb["is_certified"] = np.maximum(
+                gb["is_certified"].astype(float).fillna(0),
+                gb["is_certified_processed"].astype(float).fillna(0),
+            ).astype(int)
+            gb = gb.drop(columns=["is_certified_processed"], errors="ignore")
     
     # Keep necessary columns
     gb = gb[

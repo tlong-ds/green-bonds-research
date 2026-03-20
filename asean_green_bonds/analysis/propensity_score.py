@@ -437,6 +437,10 @@ def create_matched_dataset(
     trim_to_common_support: bool = False,
     trimming_method: str = 'crump',
     trimming_alpha: float = 0.1,
+    enforce_quality: bool = False,
+    min_matched_treated_ratio: float = 0.7,
+    max_abs_std_diff: float = 0.1,
+    balance_features: Optional[List[str]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Create propensity-score matched dataset for DiD analysis.
@@ -515,5 +519,45 @@ def create_matched_dataset(
     )
     
     diagnostics['matching_stats'] = match_stats
+
+    features_for_balance = balance_features or [
+        c for c in ['L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover', 'L1_Capital_Intensity', 'L1_Cash_Ratio']
+        if c in matched_df.columns
+    ]
+    balance_df = assess_balance(matched_df, features_for_balance, treatment_col=treatment_col)
+    if not balance_df.empty and 'Std_Difference' in balance_df.columns:
+        max_smd = float(balance_df['Std_Difference'].abs().max())
+        pct_balanced = float(balance_df['Balanced'].mean()) if 'Balanced' in balance_df.columns else np.nan
+    else:
+        max_smd = np.nan
+        pct_balanced = np.nan
+
+    treated_units = float(match_stats.get('treated_units', 0) or 0)
+    matched_treated = float(match_stats.get('matched_treated', 0) or 0)
+    matched_ratio = (matched_treated / treated_units) if treated_units > 0 else 0.0
+    quality_report = {
+        'enforce_quality': enforce_quality,
+        'min_matched_treated_ratio': min_matched_treated_ratio,
+        'max_abs_std_diff_threshold': max_abs_std_diff,
+        'matched_treated_ratio': matched_ratio,
+        'max_abs_std_diff_observed': max_smd,
+        'balanced_feature_share': pct_balanced,
+    }
+    diagnostics['balance_summary'] = quality_report
+
+    quality_failures = []
+    if matched_ratio < min_matched_treated_ratio:
+        quality_failures.append(
+            f"Matched treated ratio {matched_ratio:.3f} below threshold {min_matched_treated_ratio:.3f}"
+        )
+    if not np.isnan(max_smd) and max_smd > max_abs_std_diff:
+        quality_failures.append(
+            f"Max absolute standardized difference {max_smd:.3f} above threshold {max_abs_std_diff:.3f}"
+        )
+    diagnostics['quality_failures'] = quality_failures
+    if quality_failures:
+        diagnostics['quality_warning'] = " | ".join(quality_failures)
+        if enforce_quality:
+            raise ValueError(diagnostics['quality_warning'])
     
     return matched_df, diagnostics

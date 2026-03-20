@@ -47,6 +47,28 @@ class TestDataLoading:
         assert 'Year' in df.columns
         assert len(df) > 0
 
+    def test_load_green_bonds_data_uses_processed_certification_when_available(self, monkeypatch):
+        """Processed certification flags should enrich raw certification labels."""
+        from asean_green_bonds.data import loader as loader_mod
+
+        raw = pd.DataFrame({
+            'Deal PermID': [1, 2],
+            'Issuer/Borrower Nation': ['Singapore', 'Malaysia'],
+            'Dates: Issue Date': ['2020-01-01', '2021-01-01'],
+            'Primary Use Of Proceeds': ['Other', 'Other'],
+            'Issuer/Borrower PermID': [1001, 1002],
+            'Proceeds Amount This Market': [100.0, 120.0],
+        })
+        monkeypatch.setattr(loader_mod, "RAW_DATA_FILES", {"green_bonds": config.DATA_DIR / "green-bonds.csv"})
+        monkeypatch.setattr(pd, "read_csv", lambda path, *a, **k: raw)
+        monkeypatch.setattr(loader_mod, "_load_processed_certification_flags", lambda: pd.DataFrame({
+            'Deal PermID': [1, 2],
+            'is_certified_processed': [1, 0],
+        }))
+
+        df = loader_mod.load_green_bonds_data(asean_only=True, use_processed_certification=True)
+        assert int(df.loc[df['org_permid'] == '1001', 'is_certified'].iloc[0]) == 1
+
 
 class TestDataProcessing:
     """Tests for data processing functions."""
@@ -99,6 +121,82 @@ class TestDataProcessing:
         # The winsorized value should be less than or equal to the max of the non-outlier values
         original_max_without_outlier = self.df['return_on_assets'].max()
         assert df_winsorized['return_on_assets'].max() <= 100  # Changed < to <= for edge cases
+
+    def test_winsorize_preserves_certification_and_intensity_fields(self):
+        """Winsorization should never alter certification dummies/intensity shares."""
+        df_test = pd.DataFrame({
+            'ric': [f'R{i}' for i in range(1, 11)],
+            'Year': list(range(2015, 2025)),
+            'country': ['Singapore'] * 10,
+            'return_on_assets': [0.04] * 9 + [50.0],  # force clipping on non-protected field
+            'is_certified': [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],  # sparse binary
+            'share_certified_proceeds': [0.0, 0.0, 0.0, 0.0, 0.82, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'self_labeled_share': [1.0, 1.0, 1.0, 1.0, 0.18, 1.0, 1.0, 1.0, 1.0, 1.0],
+            'green_bond_issue': [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            'green_bond_active': [0, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+            'certified_bond_active': [0, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+        })
+
+        df_winsorized = data.winsorize_outliers(df_test, lower=0.01, upper=0.99)
+
+        protected_cols = [
+            'is_certified',
+            'share_certified_proceeds',
+            'self_labeled_share',
+            'green_bond_issue',
+            'green_bond_active',
+            'certified_bond_active',
+        ]
+        for col in protected_cols:
+            pd.testing.assert_series_equal(df_winsorized[col], df_test[col], check_names=False)
+
+
+    def test_winsorize_regression_sparse_certification_not_zeroed(self):
+        """Regression: sparse certification intensity must not be zeroed by winsorization."""
+        df_test = pd.DataFrame({
+            'ric': [f'S{i}' for i in range(1, 11)],
+            'Year': list(range(2015, 2025)),
+            'return_on_assets': [0.03] * 9 + [99.0],
+            # pre-fix failure pattern: mostly zeros with one positive certification observation
+            'is_certified': [0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+            'share_certified_proceeds': [0.0, 0.0, 0.0, 0.0, 0.0, 0.67, 0.0, 0.0, 0.0, 0.0],
+            'self_labeled_share': [1.0, 1.0, 1.0, 1.0, 1.0, 0.33, 1.0, 1.0, 1.0, 1.0],
+        })
+
+        df_winsorized = data.winsorize_outliers(df_test, lower=0.01, upper=0.99)
+
+        assert df_winsorized.loc[5, 'is_certified'] == 1
+        assert df_winsorized.loc[5, 'share_certified_proceeds'] == pytest.approx(0.67)
+        assert df_winsorized.loc[5, 'self_labeled_share'] == pytest.approx(0.33)
+        assert df_winsorized.loc[df_winsorized.index != 5, 'share_certified_proceeds'].eq(0.0).all()
+    
+    def test_winsorize_outliers_protects_treatment_and_certification_columns(self):
+        """Treatment and certification intensity columns should not be winsorized."""
+        df_test = self.df.copy()
+        df_test['is_certified'] = [0] * 19 + [1]
+        df_test['share_certified_proceeds'] = [0.0] * 19 + [1.0]
+        df_test['self_labeled_share'] = [1.0] * 19 + [0.0]
+        df_test['green_bond_active'] = [0] * 19 + [1]
+        df_test['certified_bond_active'] = [0] * 19 + [1]
+        df_test.loc[0, 'green_bond_issue'] = 1
+        baseline = df_test[
+            [
+                'is_certified', 'share_certified_proceeds', 'self_labeled_share',
+                'green_bond_issue', 'green_bond_active', 'certified_bond_active'
+            ]
+        ].copy()
+        
+        df_winsorized = data.winsorize_outliers(df_test, lower=0.01, upper=0.99)
+        
+        pd.testing.assert_frame_equal(
+            df_winsorized[
+                [
+                    'is_certified', 'share_certified_proceeds', 'self_labeled_share',
+                    'green_bond_issue', 'green_bond_active', 'certified_bond_active'
+                ]
+            ],
+            baseline
+        )
     
     def test_normalize_percentages(self):
         """Test percentage normalization."""

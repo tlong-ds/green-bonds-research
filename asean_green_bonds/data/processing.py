@@ -344,11 +344,15 @@ def winsorize_outliers(
     limits=(lower_frac, upper_frac) where lower_frac + upper_frac <= 1
     For 1st/99th percentiles, use limits=(0.01, 0.01) not (0.01, 0.99)!
     """
+    protected_cols = {
+        'ric', 'country', 'Year', 'gic', 'company',
+        'is_certified', 'share_certified_proceeds', 'self_labeled_share',
+        'green_bond_issue', 'green_bond_active', 'certified_bond_active',
+    }
     if exclude_cols is None:
-        exclude_cols = [
-            'ric', 'country', 'Year', 'gic', 'company',
-            'green_bond_issue', 'green_bond_active', 'certified_bond_active'
-        ]
+        exclude_cols = list(protected_cols)
+    else:
+        exclude_cols = list(set(exclude_cols).union(protected_cols))
     
     df = df.copy()
     numeric_cols = df.select_dtypes(include=[np.number]).columns

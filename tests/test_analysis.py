@@ -390,6 +390,18 @@ class TestDifferenceInDifferences:
         
         assert isinstance(results, pd.DataFrame)
         assert len(results) >= 2
+
+    def test_estimate_did_reports_covariance_metadata(self):
+        """DiD result should always expose covariance request/usage metadata."""
+        result = analysis.estimate_did(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+            specification='entity_fe'
+        )
+        assert 'cov_type_requested' in result
+        assert 'cov_type_used' in result
+        assert 'covariance_warning' in result
     
     def test_calculate_moulton_factor(self):
         """Test Moulton factor calculation."""
@@ -822,6 +834,40 @@ class TestGMM:
         if len(results) > 0:
             assert 'outcome' in results.columns
             assert 'coefficient' in results.columns
+
+    def test_estimate_system_gmm_uses_config_defaults(self, monkeypatch):
+        """GMM should use config-driven max_lags and survivorship mode when omitted."""
+        monkeypatch.setattr('asean_green_bonds.analysis.gmm.GMM_CONFIG', {'max_lags': 3, 'collapse_instruments': False})
+        monkeypatch.setattr('asean_green_bonds.analysis.gmm.SURVIVORSHIP_CONFIG', {'mode': 'exclude'})
+        result = analysis.estimate_system_gmm(
+            self.df,
+            outcome='outcome',
+            treatment_col='green_bond_active',
+        )
+        assert 'survivorship_mode' in result
+        assert result['survivorship_mode'] == 'exclude'
+
+    def test_create_matched_dataset_quality_warning(self):
+        """PSM diagnostics should include quality warning when thresholds are strict."""
+        self.df['propensity_score'] = analysis.estimate_propensity_scores(
+            self.df, treatment_col='green_bond_active',
+            features=['L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover', 'L1_Capital_Intensity']
+        )
+        matched, diagnostics = analysis.create_matched_dataset(
+            self.df,
+            treatment_col='green_bond_active',
+            ps_col='propensity_score',
+            ratio=1,
+            caliper=0.001,
+            enforce_quality=False,
+            min_matched_treated_ratio=0.95,
+            max_abs_std_diff=0.01,
+            balance_features=['L1_Firm_Size', 'L1_Leverage'],
+        )
+        assert isinstance(matched, pd.DataFrame)
+        assert 'balance_summary' in diagnostics
+        assert 'quality_failures' in diagnostics
+        assert len(diagnostics['quality_failures']) >= 1
 
 
 if __name__ == '__main__':
