@@ -4,12 +4,113 @@ Data loader utilities for ASEAN Green Bonds research.
 Functions for loading raw data files and managing data sources.
 """
 
+import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any, List
 
 from ..config import RAW_DATA_FILES, PROCESSED_DATA_FILES
+
+COUNTRIES = ["Vietnam", "Thailand", "Malaysia", "Singapore", "Indonesia", "Philippines", "Other"]
+# Sheet mappings from Excel source
+TS_SHEET_NAME = ["Sheet9", "Sheet10", "Sheet11", "Sheet12", "Sheet14", "Sheet13", "Sheet15"]
+SERIES_SHEET_NAME = ["Sheet16", "Sheet17", "Sheet18", "Sheet19", "Sheet21", "Sheet20", "Sheet22"]
+ESG_SHEET_NAME = ["Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7"]
+
+ATTRIBUTE_COLUMNS = {
+    'TOT RETURN IND': 'tri',
+    'MARKET VALUE': 'market_value',
+    'ASK PRICE': 'ask_price',
+    'BID PRICE': 'bid_price',
+    'TOTAL CAPITAL': 'total_capital',
+    'MARKET CAPITALIZATION': 'market_capitalization',
+    'LONG TERM DEBT': 'long_term_debt',
+    'NET SALES OR REVENUES': 'net_sales_or_revenues',
+    'OPERATING INCOME': 'operating_income',
+    'TOTAL ASSETS': 'total_assets',
+    'TOTAL LIABILITIES': 'total_liabilities',
+    'TOTAL DEBT': 'total_debt',
+    'NET CASH FLOW-OPERATING ACTIVS': 'net_cash_flow_operating_actv',
+    'RETURN ON EQUITY - TOTAL (%)': 'return_on_equity_total',
+    'RETURN ON ASSETS': 'return_on_assets',
+    'CAPITAL EXPENDITURES': 'capital_expenditures',
+    'EARNINGS BEF INTEREST & TAXES': 'earnings_bef_interest_tax',
+    'CASH': 'cash',
+    'CURRENT LIABILITIES-TOTAL': 'current_liabilities_total',
+    'CURRENT ASSETS - TOTAL': 'current_assets_total',
+    'EMPLOYEES': 'employees',
+    'INTEREST EXPENSE - TOTAL': 'interest_expense_total',
+    'TOT RETURN IND': 'tri',
+}
+
+ESG_ATTRIBUTE_COLUMNS = {
+    "ESG Score": "esg_score",
+    "Internal Carbon Pricing": "internal_carbon_pricing",
+    "Internal Carbon Price per Tonne": "internal_carbon_price_per_tonne",
+    "GHG Emissions Scope 1 and 2 and 3 Estimated Total": "estimated_total_carbon_footprint",
+    "GHG Emissions Scope 1 2 3 Estimated Total To Revenue USD in Million": "emissions_intensity",
+    "Value - Emission Reduction/Environmental Expenditures": "environmental_investment",
+    "Environmental Pillar Data Point": "environmental_pillar_data",
+    "Environmental Innovation Data Point": "environmental_innovation",
+    "Environmental Pillar Data Point (Emissions/Resource Metric)": "environmental_resource_metric",
+}
+
+WORLDSCOPE_TO_ATTRIBUTE = {
+    "MV": "MARKET VALUE",
+    "PA": "ASK PRICE",
+    "PB": "BID PRICE",
+    "RI": "TOT RETURN IND",
+    "WC01001": "NET SALES OR REVENUES",
+    "WC01075": "INTEREST EXPENSE - TOTAL",
+    "WC01250": "OPERATING INCOME",
+    "WC02003": "CASH",
+    "WC02201": "CURRENT ASSETS - TOTAL",
+    "WC02999": "TOTAL ASSETS",
+    "WC03101": "CURRENT LIABILITIES-TOTAL",
+    "WC03251": "LONG TERM DEBT",
+    "WC03255": "TOTAL DEBT",
+    "WC03351": "TOTAL LIABILITIES",
+    "WC03998": "TOTAL CAPITAL",
+    "WC04601": "CAPITAL EXPENDITURES",
+    "WC04860": "NET CASH FLOW-OPERATING ACTIVS",
+    "WC07011": "EMPLOYEES",
+    "WC08001": "MARKET CAPITALIZATION",
+    "WC08301": "RETURN ON EQUITY - TOTAL (%)",
+    "WC08326": "RETURN ON ASSETS",
+    "WC18191": "EARNINGS BEF INTEREST & TAXES",
+    "WC06010": "GIC",
+    "WC18272": "FOUNDED_DATE",
+}
+
+
+def load_refinitiv_sheet(file_path: str, sheet_name: str, header: int = 3) -> pd.DataFrame:
+    """
+    Load and clean a single sheet from the Refinitiv Excel export.
+    
+    Parameters
+    ----------
+    file_path : str
+        Path to Refinitiv Excel file.
+    sheet_name : str
+        Name of the sheet to load.
+    header : int, optional
+        Header row index (default: 3).
+        
+    Returns
+    -------
+    pd.DataFrame
+        Cleaned sheet data.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Source file '{file_path}' not found.")
+    
+    df = pd.read_excel(file_path, engine="openpyxl", sheet_name=sheet_name, header=header)
+    if "Name" in df.columns:
+        # Filter out error rows
+        df = df[df["Name"] != "#ERROR"].copy()
+        
+    return df
 
 
 def load_raw_panel_data() -> pd.DataFrame:

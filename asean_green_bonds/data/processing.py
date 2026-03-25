@@ -795,6 +795,68 @@ def calculate_survivorship_weights(
     return weights
 
 
+def normalize_country_name(country: str) -> str:
+    """Normalize country names for consistent matching."""
+    if pd.isna(country): return ""
+    mapping = {
+        'Philippines': ['PH', 'PHIL', 'PHILIPPINES', 'PHLIPPINES'],
+        'Singapore': ['SG', 'SING', 'SINGAPORE'],
+        'Malaysia': ['MY', 'MAL', 'MALAYSIA'],
+        'Vietnam': ['VN', 'VIE', 'VIETNAM'],
+        'Thailand': ['TH', 'THAI', 'THAILAND'],
+        'Indonesia': ['ID', 'IDO', 'INDONESIA'],
+    }
+    c = str(country).upper().strip()
+    for norm, variants in mapping.items():
+        if c in [v.upper() for v in variants]: return norm
+    return c
+
+
+def normalize_and_match_issuers(bonds_df: pd.DataFrame, esg_df: pd.DataFrame) -> dict:
+    """Create a mapping between bond issuers and ESG panel companies."""
+    from ..authenticity import normalize_company_name
+    
+    esg_df = esg_df.copy()
+    esg_df['norm_name'] = esg_df['company'].apply(normalize_company_name)
+    esg_df['norm_country'] = esg_df['country'].apply(normalize_country_name)
+    
+    esg_lookup = {}
+    for (name, country), group in esg_df.groupby(['norm_name', 'norm_country']):
+        esg_lookup[(name, country)] = group
+        
+    matches = {}
+    for idx, row in bonds_df.iterrows():
+        norm_issuer = normalize_company_name(row.get('Issuer/Borrower Name Full', ''))
+        norm_country = normalize_country_name(row.get('Issuer/Borrower Nation', ''))
+        
+        if (norm_issuer, norm_country) in esg_lookup:
+            matches[idx] = esg_lookup[(norm_issuer, norm_country)]
+            
+    return matches
+
+
+def merge_esg_scores_from_panel(bonds_df: pd.DataFrame, esg_df: pd.DataFrame) -> pd.DataFrame:
+    """Merge ESG scores from panel data into bond dataset based on issuance year."""
+    result_df = bonds_df.copy()
+    matches = normalize_and_match_issuers(bonds_df, esg_df)
+    
+    for col in ['esg_score_pre', 'esg_score_issue', 'esg_score_post']:
+        result_df[col] = np.nan
+        
+    for idx, esg_data in matches.items():
+        date_str = str(result_df.at[idx, 'Dates: Issue Date'])
+        year_match = re.search(r'(\d{4})', date_str)
+        if not year_match: continue
+        year = int(year_match.group(1))
+        
+        # Get scores for pre, issue, post years
+        for offset, col in [(-1, 'esg_score_pre'), (0, 'esg_score_issue'), (1, 'esg_score_post')]:
+            val = esg_data[esg_data['Year'] == year + offset]['esg_score']
+            if not val.empty: result_df.at[idx, col] = val.iloc[0]
+            
+    return result_df
+
+
 def prepare_analysis_sample(
     df: pd.DataFrame,
     survivorship_mode: str = 'ignore',

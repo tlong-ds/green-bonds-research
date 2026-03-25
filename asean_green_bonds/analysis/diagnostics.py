@@ -354,6 +354,61 @@ def heterogeneous_effects_analysis(
     return effects
 
 
+def detect_survivorship_bias(
+    df: pd.DataFrame,
+    entity_col: str = 'ric',
+    time_col: str = 'Year',
+    recent_years: Optional[List[int]] = None,
+    early_years: Optional[List[int]] = None,
+    existence_col: str = 'total_assets',
+) -> pd.DataFrame:
+    """
+    Identifies potential survivorship bias by finding firms that disappear 
+    before the end of the sample period.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data.
+    entity_col : str, optional
+        Entity identifier (default: 'ric').
+    time_col : str, optional
+        Time identifier (default: 'Year').
+    recent_years : list, optional
+        Years to check for firm existence (default: [2023, 2024, 2025]).
+    early_years : list, optional
+        Years to check for initial firm existence (default: [2015, 2016, 2017]).
+    existence_col : str, optional
+        Column to check for non-null as existence proxy (default: 'total_assets').
+        
+    Returns
+    -------
+    pd.DataFrame
+        Potential delisted/inactive firms with their last year of data.
+    """
+    if recent_years is None:
+        recent_years = [2023, 2024, 2025]
+    if early_years is None:
+        early_years = [2015, 2016, 2017]
+        
+    def check_existence(group):
+        has_early = group[group[time_col].isin(early_years)][existence_col].notna().any()
+        has_recent = group[group[time_col].isin(recent_years)][existence_col].notna().any()
+        last_year = group[group[existence_col].notna()][time_col].max()
+        return pd.Series({
+            'has_early_data': has_early,
+            'has_recent_data': has_recent,
+            'last_year_with_data': last_year
+        })
+        
+    existence = df.groupby(entity_col).apply(check_existence)
+    
+    # Potential dead firms: had data in early years but none in recent years
+    potential_dead_firms = existence[(existence['has_early_data']) & (~existence['has_recent_data'])]
+    
+    return potential_dead_firms
+
+
 def run_diagnostics_battery(
     df: pd.DataFrame,
     outcome: str,

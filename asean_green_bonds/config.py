@@ -80,9 +80,9 @@ LAGGED_VARIABLES = [
 
 # DiD specification parameters
 TIME_PERIODS = {
-    "pre_treatment_start": 2015,
-    "pre_treatment_end": 2016,
-    "treatment_start": 2017,
+    "pre_treatment_start": 2020,
+    "pre_treatment_end": 2020,
+    "treatment_start": 2020,
     "analysis_end": 2024,
 }
 

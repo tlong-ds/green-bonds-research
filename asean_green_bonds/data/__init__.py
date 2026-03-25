@@ -35,6 +35,13 @@ from .processing import (
     prepare_analysis_sample,
 )
 
+from .feature_engineering import (
+    engineer_psm_attributes,
+    merge_psm_into_panel,
+    normalize_psm_attributes,
+    calculate_tobin_q,
+)
+
 from .feature_selection import (
     calculate_vif,
     correlation_filter,
@@ -74,6 +81,11 @@ __all__ = [
     "filter_survived_firms",
     "calculate_survivorship_weights",
     "prepare_analysis_sample",
+    # Feature Engineering
+    "engineer_psm_attributes",
+    "merge_psm_into_panel",
+    "normalize_psm_attributes",
+    "calculate_tobin_q",
     # Feature Selection
     "calculate_vif",
     "correlation_filter",

@@ -8,7 +8,9 @@ for green bonds, including CBI (Climate Bonds Initiative) and ICMA
 
 import pandas as pd
 import numpy as np
-from typing import Optional, Tuple
+import re
+from scipy import stats
+from typing import Optional, Tuple, List, Dict
 from datetime import datetime
 
 
@@ -449,50 +451,414 @@ def validate_icma_data(
     }
 
 
-def compare_cbi_vs_icma(df: pd.DataFrame) -> dict:
+def compute_authenticity_score(df: pd.DataFrame, tier3_cap_score: Optional[int] = None) -> pd.DataFrame:
     """
-    Compare CBI and ICMA certification classifications.
+    Compute a composite authenticity score combining all verification indicators.
     
     Parameters
     ----------
-    df : pd.DataFrame
-        DataFrame with both 'is_cbi_certified' and 'is_icma_certified' columns.
+    df : pandas.DataFrame
+        DataFrame with verification indicators.
+    tier3_cap_score : int, optional
+        Maximum score for Tier 3 bonds (no ESG data). Defaults to 60.
+    
+    Returns
+    -------
+    pandas.DataFrame
+        Input DataFrame with added authenticity score columns.
+    """
+    # Create a working copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Determine tier information
+    has_tier_info = 'authenticity_tier' in result_df.columns
+    if not has_tier_info:
+        result_df['authenticity_tier'] = 1
+    
+    # Determine tier3 cap
+    if 'tier3_cap_score' in result_df.columns:
+        tier3_caps = result_df['tier3_cap_score'].fillna(60)
+    elif tier3_cap_score is not None:
+        tier3_caps = pd.Series(tier3_cap_score, index=result_df.index)
+    else:
+        tier3_caps = pd.Series(60, index=result_df.index)
+    
+    # Fill NaN values appropriately
+    cols_to_fill = {
+        'is_authentic': 0,
+        'esg_improvement': 0,
+        'esg_pvalue': 1.0,
+        'is_cbi_certified': 0,
+        'is_icma_certified': 0,
+        'icma_confidence': 0,
+        'issuer_track_record': 0,
+        'has_green_framework': 0,
+        'authenticity_tier': 3,
+    }
+    
+    for col, fill_value in cols_to_fill.items():
+        if col in result_df.columns:
+            result_df[col] = result_df[col].fillna(fill_value)
+        else:
+            result_df[col] = fill_value
+    
+    # Issuer verification
+    issuer_verified = pd.Series(0, index=result_df.index)
+    if 'issuer_nation' in result_df.columns and 'Issuer/Borrower Nation' in result_df.columns:
+        issuer_verified = (result_df['issuer_nation'] == result_df['Issuer/Borrower Nation']).astype(int)
+    
+    # ESG Component (0-40 points)
+    esg_component = (result_df['is_authentic'].fillna(0) * 30 +
+                     (result_df['esg_improvement'].fillna(0) > 10).astype(int) * 5 +
+                     (result_df['esg_pvalue'].fillna(1.0) < 0.05).astype(int) * 5)
+    esg_component = esg_component.clip(0, 40)
+    
+    # Tier adjustments
+    tier2_mask = result_df['authenticity_tier'] == 2
+    tier3_mask = result_df['authenticity_tier'] == 3
+    esg_component = esg_component.where(~tier2_mask, esg_component.clip(0, 20))
+    esg_component = esg_component.where(~tier3_mask, 0)
+    
+    # Certification Component (0-35 points)
+    cert_component = (result_df['is_cbi_certified'].fillna(0) * 15 +
+                      result_df['is_icma_certified'].fillna(0) * 15 +
+                      (result_df['icma_confidence'].fillna(0) > 0.9).astype(int) * 5)
+    cert_component = cert_component.clip(0, 35)
+    
+    # Issuer Component (0-25 points)
+    issuer_component = (issuer_verified * 10 +
+                        (result_df['issuer_track_record'].fillna(0) > 0).astype(int) * 10 +
+                        result_df['has_green_framework'].fillna(0) * 5)
+    issuer_component = issuer_component.clip(0, 25)
+    
+    # Final Score
+    authenticity_score = esg_component + cert_component + issuer_component
+    authenticity_score = authenticity_score.where(~tier3_mask, authenticity_score.clip(upper=tier3_caps))
+    
+    # Categorization
+    def categorize_score(score):
+        if score >= 80: return 'High'
+        if score >= 60: return 'Medium'
+        if score >= 40: return 'Low'
+        return 'Unverified'
+    
+    result_df['esg_component'] = esg_component
+    result_df['cert_component'] = cert_component
+    result_df['issuer_component'] = issuer_component
+    result_df['authenticity_score'] = authenticity_score
+    result_df['authenticity_category'] = authenticity_score.apply(categorize_score)
+    
+    return result_df
+
+
+def normalize_company_name(name: str) -> str:
+    """Standardize company name by removing suffixes and punctuation."""
+    if pd.isna(name): return ""
+    name = str(name).upper()
+    suffixes = [
+        r'\bPCL\b', r'\bPLC\b', r'\bLTD\b', r'\bLIMITED\b', r'\bCORP\b', 
+        r'\bCORPORATION\b', r'\bINC\b', r'\bINCORPORATED\b', r'\bBHD\b', 
+        r'\bSDN BHD\b', r'\bPT\b', r'\bTBK\b', r'\bCO\b', r'\bCOMPANY\b',
+        r'\bGROUP\b', r'\bHOLDINGS\b', r'\bHOLDING\b', r'\bOJK\b', r'\bSA\b'
+    ]
+    for suffix in suffixes:
+        name = re.sub(suffix, '', name)
+    name = re.sub(r'[^\w\s]', '', name)
+    return name.strip()
+
+
+def calculate_authenticity_tiered(
+    df_gb: pd.DataFrame,
+    df_esg: pd.DataFrame,
+    tier1_min_obs: int = 2,
+    tier2_min_obs: int = 1,
+) -> pd.DataFrame:
+    """Calculate authenticity with tiered approach based on ESG data availability."""
+    result_df = df_gb.copy()
+    result_df['match_name'] = result_df['Issuer/Borrower Name Full'].apply(normalize_company_name)
+    esg_copy = df_esg.copy()
+    esg_copy['match_name'] = esg_copy['company'].apply(normalize_company_name)
+    
+    # Initialize
+    for col in ['is_authentic', 'authenticity_tier', 'n_pre_obs', 'n_post_obs']:
+        result_df[col] = 0
+    result_df['esg_improvement'] = np.nan
+    result_df['esg_pvalue'] = np.nan
+    result_df['tier_description'] = 'Certification_Only'
+    result_df['authenticity_tier'] = 3
+    
+    issuance_years = result_df['Dates: Issue Date'].str.extract(r'(\d{4})')[0].astype(float)
+    
+    for idx, row in result_df.iterrows():
+        issuer = row['match_name']
+        year = issuance_years.iloc[idx]
+        if pd.isna(year) or not issuer: continue
+        
+        issuer_data = esg_copy[esg_copy['match_name'] == issuer]
+        if issuer_data.empty: continue
+        
+        pre_esg = issuer_data[issuer_data['Year'].between(year-3, year-1)]['esg_score'].dropna().values
+        post_esg = issuer_data[issuer_data['Year'].between(year+1, year+3)]['esg_score'].dropna().values
+        
+        result_df.at[idx, 'n_pre_obs'] = len(pre_esg)
+        result_df.at[idx, 'n_post_obs'] = len(post_esg)
+        
+        if len(pre_esg) >= tier1_min_obs and len(post_esg) >= tier1_min_obs:
+            improv = float(post_esg.mean() - pre_esg.mean())
+            _, pval = stats.ttest_ind(post_esg, pre_esg)
+            result_df.at[idx, 'esg_improvement'] = improv
+            result_df.at[idx, 'esg_pvalue'] = pval
+            result_df.at[idx, 'authenticity_tier'] = 1
+            result_df.at[idx, 'tier_description'] = 'Complete'
+            if pval < 0.10 and improv > 0: result_df.at[idx, 'is_authentic'] = 1
+        elif len(pre_esg) >= tier2_min_obs and len(post_esg) >= tier2_min_obs:
+            improv = float(post_esg.mean() - pre_esg.mean())
+            result_df.at[idx, 'esg_improvement'] = improv
+            result_df.at[idx, 'authenticity_tier'] = 2
+            result_df.at[idx, 'tier_description'] = 'Partial'
+            if improv > 0: result_df.at[idx, 'is_authentic'] = 1
+            
+    return result_df.drop(columns=['match_name'])
+
+
+def get_esg_coverage_by_country(df_esg: pd.DataFrame, df_gb: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate ESG data coverage statistics by country for green bond issuers.
+    
+    Parameters
+    ----------
+    df_esg : pd.DataFrame
+        ESG panel data.
+    df_gb : pd.DataFrame
+        Green bonds data.
         
     Returns
     -------
-    dict
-        Dictionary containing:
-        - 'both': Number of bonds certified as both CBI and ICMA
-        - 'cbi_only': Number of bonds certified as CBI only
-        - 'icma_only': Number of bonds certified as ICMA only
-        - 'neither': Number of bonds not certified as either
-        - 'overlap_pct': Percentage of CBI bonds that are also ICMA certified
-        
-    Examples
-    --------
-    >>> df = pd.DataFrame({
-    ...     'is_cbi_certified': [1, 1, 0, 0],
-    ...     'is_icma_certified': [1, 0, 1, 0]
-    ... })
-    >>> comparison = compare_cbi_vs_icma(df)
-    >>> comparison['both']
-    1
+    pd.DataFrame
+        Coverage statistics by country.
     """
-    both = ((df['is_cbi_certified'] == 1) & (df['is_icma_certified'] == 1)).sum()
-    cbi_only = ((df['is_cbi_certified'] == 1) & (df['is_icma_certified'] == 0)).sum()
-    icma_only = ((df['is_cbi_certified'] == 0) & (df['is_icma_certified'] == 1)).sum()
-    neither = ((df['is_cbi_certified'] == 0) & (df['is_icma_certified'] == 0)).sum()
+    df_tiered = calculate_authenticity_tiered(df_gb, df_esg)
     
-    cbi_total = (df['is_cbi_certified'] == 1).sum()
-    overlap_pct = round((both / cbi_total * 100) if cbi_total > 0 else 0, 2)
+    # Ensure country column exists
+    country_col = 'Issuer/Borrower Nation' if 'Issuer/Borrower Nation' in df_gb.columns else 'country'
+    if country_col in df_gb.columns:
+        df_tiered['country'] = df_gb[country_col]
+    else:
+        df_tiered['country'] = 'Unknown'
+    
+    coverage = df_tiered.groupby('country').agg(
+        total_bonds=('authenticity_tier', 'count'),
+        bonds_with_complete_esg=('authenticity_tier', lambda x: (x == 1).sum()),
+        bonds_with_partial_esg=('authenticity_tier', lambda x: (x == 2).sum()),
+        bonds_with_no_esg=('authenticity_tier', lambda x: (x == 3).sum()),
+    ).reset_index()
+    
+    coverage['coverage_rate'] = ((coverage['bonds_with_complete_esg'] + coverage['bonds_with_partial_esg']) 
+                                / coverage['total_bonds'] * 100).round(2).fillna(0)
+    return coverage
+
+
+def compute_issuer_track_record(df: pd.DataFrame) -> pd.Series:
+    """Compute the track record (prior issuances) for each issuer."""
+    df_work = df.copy()
+    df_work['_orig_idx'] = range(len(df_work))
+    df_work['Dates: Issue Date'] = pd.to_datetime(df_work['Dates: Issue Date'])
+    df_sorted = df_work.sort_values(['Issuer/Borrower Name Full', 'Dates: Issue Date', '_orig_idx'], kind='stable')
+    track_record = df_sorted.groupby('Issuer/Borrower Name Full', sort=False).cumcount()
+    track_record_dict = dict(zip(df_sorted['_orig_idx'], track_record.values))
+    return pd.Series([track_record_dict[i] for i in range(len(df))], index=df.index)
+
+
+def classify_issuer_type(issue_type: str) -> str:
+    """Classify bond issue type into standardized categories."""
+    if pd.isna(issue_type): return 'unknown'
+    t = str(issue_type).lower()
+    if 'sovereign' in t: return 'sovereign'
+    if 'agency' in t or 'supranational' in t: return 'agency'
+    if 'corporate' in t: return 'corporate'
+    return 'other'
+
+
+def has_green_framework(primary_use: str) -> int:
+    """Determine if issuer has documented green bond framework."""
+    if pd.isna(primary_use): return 0
+    return 1 if 'green bond purposes' in str(primary_use).lower() else 0
+
+
+def generate_authenticity_report(df: pd.DataFrame) -> dict:
+    """Generate summary statistics for authenticity scores."""
+    if 'authenticity_score' not in df.columns:
+        raise ValueError("DataFrame must contain 'authenticity_score' column")
+    
+    scores = df['authenticity_score']
+    categories = df['authenticity_category']
     
     return {
-        'both': both,
-        'cbi_only': cbi_only,
-        'icma_only': icma_only,
-        'neither': neither,
-        'overlap_pct': overlap_pct,
-        'cbi_total': cbi_total,
-        'icma_total': (df['is_icma_certified'] == 1).sum()
+        'total_bonds': len(df),
+        'score_mean': scores.mean(),
+        'score_median': scores.median(),
+        'score_std': scores.std(),
+        'score_min': scores.min(),
+        'score_max': scores.max(),
+        'category_distribution': categories.value_counts().to_dict(),
+        'high_authenticity': (categories == 'High').sum(),
+        'medium_authenticity': (categories == 'Medium').sum(),
+        'low_authenticity': (categories == 'Low').sum(),
+        'unverified': (categories == 'Unverified').sum(),
     }
+
+
+def print_authenticity_report(report: dict) -> None:
+    """Print the authenticity report in a formatted way."""
+    print("\n" + "="*70)
+    print("                      AUTHENTICITY SCORE REPORT                       ")
+    print("="*70)
+    print(f"\nTotal Bonds Analyzed: {report['total_bonds']}")
+    print(f"\nScore Statistics:")
+    print(f"  Mean:                   {report['score_mean']:2.2f}")
+    print(f"  Median:                 {report['score_median']:2.2f}")
+    print(f"  Std Dev:                 {report['score_std']:2.2f}")
+    print(f"  Min:                     {report['score_min']:2.2f}")
+    print(f"  Max:                     {report['score_max']:2.2f}")
+    
+    print(f"\nAuthenticity Categories:")
+    total = report['total_bonds']
+    for cat in ['High', 'Medium', 'Low', 'Unverified']:
+        count = report['category_distribution'].get(cat, 0)
+        pct = (count / total * 100) if total > 0 else 0
+        range_str = {'High': '(80-100)', 'Medium': '(60-79)', 'Low': '(40-59)', 'Unverified': '(<40)'}.get(cat)
+        print(f"  {cat:10s} {range_str:10s}: {count:10d} ({pct:5.1f}%)")
+    
+    print("\n" + "="*70)
+
+
+def apply_authenticity_proxy(
+    panel_data_path: str,
+    green_bonds_path: str,
+    output_path: Optional[str] = None
+) -> pd.DataFrame:
+    """
+    Perform tiered authenticity calculation and return result.
+    
+    Parameters
+    ----------
+    panel_data_path : str
+        Path to ESG panel data CSV.
+    green_bonds_path : str
+        Path to green bonds CSV.
+    output_path : str, optional
+        If provided, save results to this path.
+        
+    Returns
+    -------
+    pd.DataFrame
+        Authenticity-scored green bonds.
+    """
+    df_esg = pd.read_csv(panel_data_path)
+    df_gb = pd.read_csv(green_bonds_path)
+    
+    # Extract certifications
+    df_gb = extract_cbi_certification(df_gb)
+    df_gb = extract_icma_certification(df_gb)
+    
+    # Tiered authenticity
+    result = calculate_authenticity_tiered(df_gb, df_esg)
+    
+    if output_path:
+        result.to_csv(output_path, index=False)
+        
+    return result
+
+
+def apply_authenticity_with_fallbacks(
+    panel_data_path: str,
+    green_bonds_path: str,
+    esg_panel_path: Optional[str] = None,
+    fallback: str = 'tiered',
+    output_path: str = 'data/green_bonds_authentic_tiered.csv'
+) -> pd.DataFrame:
+    """
+    Apply authenticity scoring with configurable fallback behaviors.
+    
+    Parameters
+    ----------
+    panel_data_path : str
+        Path to financial panel data (for compatibility).
+    green_bonds_path : str
+        Path to green bonds data.
+    esg_panel_path : str, optional
+        Path to ESG panel data. Defaults to panel_data_path.
+    fallback : str, optional
+        Fallback mode: 'strict', 'tiered', or 'certification_only'.
+    output_path : str, optional
+        Path to save results.
+        
+    Returns
+    -------
+    pd.DataFrame
+        Scored green bonds.
+    """
+    if esg_panel_path is None:
+        esg_panel_path = panel_data_path
+        
+    df_esg = pd.read_csv(esg_panel_path)
+    df_gb = pd.read_csv(green_bonds_path)
+    
+    # Extract certifications
+    df_gb = extract_cbi_certification(df_gb)
+    df_gb = extract_icma_certification(df_gb)
+    
+    if fallback == 'certification_only':
+        # Force all to Tier 3
+        result = df_gb.copy()
+        result['authenticity_tier'] = 3
+        result['is_authentic'] = 0
+        result['tier_description'] = 'Certification_Only'
+    elif fallback == 'strict':
+        # Only Tier 1 and Tier 3 (original behavior)
+        result = calculate_authenticity_tiered(df_gb, df_esg, tier1_min_obs=2, tier2_min_obs=100)
+    elif fallback == 'tiered':
+        # Full tiered approach
+        result = calculate_authenticity_tiered(df_gb, df_esg)
+    else:
+        raise ValueError(f"fallback must be 'strict', 'tiered', or 'certification_only', got '{fallback}'")
+        
+    # Standardize result
+    if 'authenticity_score' not in result.columns:
+        result = compute_authenticity_score(result)
+        
+    # Final output
+    print(f"\nAUTHENTICITY SCORING RESULTS")
+    print("="*70)
+    print(f"Fallback mode: {fallback}")
+    
+    tier_dist = result['authenticity_tier'].value_counts(normalize=True).sort_index()
+    print("\nTier Distribution:")
+    for tier, pct in tier_dist.items():
+        name = {1: 'Complete', 2: 'Partial', 3: 'Certification_Only'}.get(tier, 'Unknown')
+        count = (result['authenticity_tier'] == tier).sum()
+        print(f"  Tier {tier} ({name}): {count} ({pct*100:.1f}%)")
+        
+    auth_count = result['is_authentic'].sum()
+    print(f"\nAuthenticity Status:")
+    print(f"  Authentic: {auth_count} ({auth_count/len(result)*100:.1f}%)")
+    print(f"  Not Authentic/Unverified: {len(result)-auth_count} ({(len(result)-auth_count)/len(result)*100:.1f}%)")
+    
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        result.to_csv(output_path, index=False)
+        print(f"\n✅ Saved to {output_path}")
+        
+    return result
+
+
+def extract_issuer_verification_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """Extract issuer verification fields from bond data."""
+    result = df.copy()
+    result['issuer_nation'] = df['Issuer/Borrower Nation'].fillna('Unknown')
+    result['issuer_sector'] = df['Issuer/Borrower TRBC Business Sector'].fillna('Unknown')
+    result['issuer_type'] = df['Issue Type'].apply(classify_issuer_type)
+    result['issuer_track_record'] = compute_issuer_track_record(df)
+    result['has_green_framework'] = df['Primary Use Of Proceeds'].apply(has_green_framework)
+    return result
 

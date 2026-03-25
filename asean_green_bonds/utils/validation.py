@@ -335,6 +335,63 @@ def validate_regression_assumptions(
     }
 
 
+def check_panel_columns(df: pd.DataFrame, requested_outcomes: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Diagnostic function to check available columns and outcome variables in panel data.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data.
+    requested_outcomes : list, optional
+        List of outcome variables to check (default: ['return_on_assets', 'Tobin_Q', 'esg_score']).
+        
+    Returns
+    -------
+    dict
+        Column diagnostics report.
+    """
+    if requested_outcomes is None:
+        requested_outcomes = ['return_on_assets', 'Tobin_Q', 'esg_score']
+        
+    report = {
+        'total_columns': len(df.columns),
+        'columns': list(df.columns),
+        'outcomes': {},
+        'required_vars': {},
+        'financial_metrics': {}
+    }
+    
+    # Check outcomes
+    for outcome in requested_outcomes:
+        if outcome in df.columns:
+            report['outcomes'][outcome] = {
+                'found': True,
+                'non_null': int(df[outcome].notna().sum()),
+                'null_pct': float(df[outcome].isna().mean() * 100)
+            }
+        else:
+            similar = [c for c in df.columns if outcome.lower() in c.lower() or c.lower() in outcome.lower()]
+            report['outcomes'][outcome] = {'found': False, 'similar': similar}
+            
+    # Check required vars
+    required = ['ric', 'Year', 'green_bond_active', 'L1_Firm_Size', 'L1_Leverage']
+    for var in required:
+        report['required_vars'][var] = {
+            'found': var in df.columns,
+            'non_null': int(df[var].notna().sum()) if var in df.columns else 0
+        }
+        
+    # Check common metrics
+    common = ['roa', 'roe', 'tobin', 'esg', 'return', 'profit', 'asset']
+    for metric in common:
+        matching = [c for c in df.columns if metric.lower() in c.lower()]
+        for m in matching:
+            report['financial_metrics'][m] = int(df[m].notna().sum())
+            
+    return report
+
+
 def generate_data_quality_report(
     df: pd.DataFrame,
     entity_col: str = 'ric',

@@ -342,6 +342,45 @@ def merge_psm_into_panel(
     return df
 
 
+def calculate_tobin_q(df: pd.DataFrame, winsorize: bool = True) -> pd.DataFrame:
+    """
+    Calculate Tobin's Q and add it to the panel data.
+    
+    Tobin's Q = (Market Value of Equity + Total Liabilities) / Total Assets
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with required financial columns.
+    winsorize : bool, optional
+        If True, cap Tobin's Q at 10 and remove negative values.
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added 'Tobin_Q' column.
+    """
+    df_copy = df.copy()
+    
+    # Method 1: Using market_capitalization
+    if 'market_capitalization' in df_copy.columns and 'total_liabilities' in df_copy.columns and 'total_assets' in df_copy.columns:
+        df_copy['Tobin_Q'] = (df_copy['market_capitalization'] + df_copy['total_liabilities']) / df_copy['total_assets']
+    # Method 2: Fallback to market_value
+    elif 'market_value' in df_copy.columns and 'total_liabilities' in df_copy.columns and 'total_assets' in df_copy.columns:
+        df_copy['Tobin_Q'] = (df_copy['market_value'] + df_copy['total_liabilities']) / df_copy['total_assets']
+    else:
+        # Warning if columns are missing
+        print("Warning: Missing columns for Tobin's Q calculation")
+        return df_copy
+
+    if winsorize:
+        # Remove negative values and cap at 10
+        df_copy.loc[df_copy['Tobin_Q'] < 0, 'Tobin_Q'] = np.nan
+        df_copy.loc[df_copy['Tobin_Q'] > 10, 'Tobin_Q'] = 10
+        
+    return df_copy
+
+
 def normalize_psm_attributes(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     """
     Normalize PSM attribute names to lowercase and ensure consistency.
