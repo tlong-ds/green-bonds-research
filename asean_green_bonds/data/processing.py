@@ -30,31 +30,37 @@ def merge_panel_data(
     financial_df : pd.DataFrame
         Financial panel data with 'ric' and 'Year'.
     esg_df : pd.DataFrame
-        ESG data with 'isin' identifier.
+        ESG data with 'ticker' identifier.
     market_df : pd.DataFrame
-        Market data mapping 'isin' to 'ric'.
+        Market data (unused in new format, kept for compatibility).
         
     Returns
     -------
     pd.DataFrame
         Merged financial and ESG data.
     """
-    # Map RIC to ISIN via market data
-    tmp1 = pd.merge(esg_df, market_df, on="isin", how="inner")
-    tmp1 = tmp1.drop(
-        [col for col in ["name", "org_permid", "company", "country"] 
-         if col in tmp1.columns],
-        axis=1,
-        errors='ignore'
-    )
+    # Merge financial and ESG data directly on ticker/ric and Year
+    # In the new format, financial_df['ric'] and esg_df['ticker'] are equivalent
+    esg_df = esg_df.copy()
+    esg_df["Year"] = esg_df["Year"].astype(int)
     
-    # Merge financial and ESG data
-    tmp1["Year"] = tmp1["Year"].astype(int)
-    merged = pd.merge(financial_df, tmp1, on=["ric", "Year"], how="left")
+    # Identify common identifier
+    fid = 'ric' if 'ric' in financial_df.columns else 'ticker'
+    eid = 'ticker' if 'ticker' in esg_df.columns else 'isin'
+    
+    # Drop redundant columns from ESG before merge
+    drop_cols = [col for col in ["company", "country"] if col in esg_df.columns]
+    esg_clean = esg_df.drop(drop_cols, axis=1)
+    
+    merged = pd.merge(financial_df, esg_clean, left_on=[fid, "Year"], right_on=[eid, "Year"], how="left")
+    
+    # If both columns exist, drop the redundant one
+    if fid != eid and fid in merged.columns and eid in merged.columns:
+        merged = merged.drop(eid, axis=1)
     
     # Reset index and remove duplicates
     merged = merged.reset_index(drop=True)
-    merged = merged.drop_duplicates(subset=["ric", "Year"])
+    merged = merged.drop_duplicates(subset=[fid, "Year"])
     
     return merged
 
