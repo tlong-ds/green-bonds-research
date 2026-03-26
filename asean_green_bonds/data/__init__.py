@@ -7,17 +7,6 @@ Submodules:
     feature_selection: Feature selection methods
 """
 
-from loader import (
-    load_raw_panel_data,
-    load_esg_panel_data,
-    load_market_data,
-    load_green_bonds_data,
-    load_series_data,
-    load_processed_data,
-    get_data_info,
-    prepare_refinitiv_data,
-)
-
 from .processing import (
     merge_panel_data,
     merge_green_bonds,
@@ -58,15 +47,6 @@ from .feature_selection import (
 )
 
 __all__ = [
-    # Loader
-    "load_raw_panel_data",
-    "load_esg_panel_data",
-    "load_market_data",
-    "load_green_bonds_data",
-    "load_series_data",
-    "load_processed_data",
-    "get_data_info",
-    "prepare_refinitiv_data",
     # Processing
     "merge_panel_data",
     "merge_green_bonds",

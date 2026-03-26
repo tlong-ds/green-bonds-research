@@ -17,8 +17,8 @@ COUNTRIES = ["Vietnam", "Thailand", "Malaysia", "Singapore", "Philippines", "Ind
 FINANCIAL_SHEET_NAME = ["Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7"]
 MARKET_SHEET_NAME = ["Sheet8", "Sheet9", "Sheet10", "Sheet11", "Sheet12", "Sheet13", "Sheet14"]
 STATIC_SHEET_NAME = ["Sheet15", "Sheet16", "Sheet17", "Sheet18", "Sheet19", "Sheet20", "Sheet21"]
-ESG_SHEET_NAME = ["Sheet22", "Sheet23", "Sheet24", "Sheet25", "Sheet26", "Sheet27", "Sheet28"]
-GOVERNANCE_SHEET_NAME = ["Sheet29", "Sheet30", "Sheet31", "Sheet32", "Sheet33", "Sheet34", "Sheet35"]
+ESG_SHEET_NAME = ["Sheet22", "Sheet23", "Sheet24", "Sheet25", "Sheet26", "Sheet27", "Sheet28"] # now include governance data as time series
+# GOVERNANCE_SHEET_NAME = ["Sheet29", "Sheet30", "Sheet31", "Sheet32", "Sheet33", "Sheet34", "Sheet35"] -- depreciated 
 
 # Financial Fundamentals (Worldscope)
 FINANCIAL_ATTRIBUTE_COLUMNS = {
@@ -65,21 +65,17 @@ ESG_ATTRIBUTE_COLUMNS = {
     "Value - Emission Reduction/Environmental Expenditures": "environmental_investment",
     "Environmental Pillar Data Point": "environmental_pillar_data",
     "Environmental Pillar Data Point (Emissions/Resource Metric)": "environmental_resource_metric",
-}
-
-# Corporate Governance (CG / ASSET4)
-GOVERNANCE_ATTRIBUTE_COLUMNS = {
+    # governance attributes
     "Board Size": "board_size",
-    "Board Independence %": "board_independence",
-    "CEO–Chairman Separation": "ceo_separation", # ceo_duality = 1 - ceo_separation
+    "Board Independence": "board_independence",
+    "CEO–Chairman Separation": "ceo_separation", 
 }
 
 # Series / Static Attributes
 STATIC_ATTRIBUTE_COLUMNS = {
-    "Country of Incorporation": "country_code",
-    "Industry / Sector Classification": "industry_group",
+    "Industry / Sector Classification": "industry_group_code",
+    "Date of Incorporation": "founding_year",
     "GIC": "gic",
-    "FOUNDED_DATE": "founded_date",
 }
 
 # Combined mapping
@@ -87,7 +83,7 @@ ATTRIBUTE_COLUMNS = {
     **FINANCIAL_ATTRIBUTE_COLUMNS,
     **MARKET_ATTRIBUTE_COLUMNS,
     **ESG_ATTRIBUTE_COLUMNS,
-    **GOVERNANCE_ATTRIBUTE_COLUMNS,
+    # **GOVERNANCE_ATTRIBUTE_COLUMNS,
     **STATIC_ATTRIBUTE_COLUMNS,
 }
 
@@ -117,8 +113,8 @@ WORLDSCOPE_TO_ATTRIBUTE = {
     "WC08326": "RETURN ON ASSETS",
     "WC18191": "EARNINGS BEF INTEREST & TAXES",
     # Static / Others
-    "WC06010": "Country of Incorporation",
-    "WC18272": "Industry / Sector Classification",
+    "WC06010": "Industry / Sector Classification",
+    "WC18272": "Date of Incorporation",
     # ESG
     "TRESGS": "ESG Score",
     "ENERDP013": "Total Energy Consumed",
@@ -127,10 +123,10 @@ WORLDSCOPE_TO_ATTRIBUTE = {
     "ENERO132V": "Scope 1 + 2 GHG Emissions",
     "ENERO24V": "CO2 Equivalent Emissions",
     "ENPIDP023": "Environmental Innovation Data Point",
-    # Governance
+    # Governance (Binary/Static Flags)
     "CGBSDP060": "Board Size",
-    "CGBSDP0012": "Board Independence %",
-    "CGBSO09V": "CEO–Chairman Separation",
+    "CGBSDP0012": "Board Independence Flag",
+    "CGBSO09V": "CEO–Chairman Separation Flag",
 }
 
 
@@ -168,7 +164,7 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
     os.makedirs(output_dir, exist_ok=True)
     
     # Remove existing CSVs to prevent double-appending on re-run
-    for f in ["panel_data.csv", "esg_panel_data.csv", "series_data.csv"]:
+    for f in ["panel_data.csv", "esg_panel_data.csv", "static_data.csv", "governance_data.csv", "financial_data.csv", "market_data.csv"]:
         path = os.path.join(output_dir, f)
         if os.path.exists(path):
             os.remove(path)
@@ -281,15 +277,10 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
 
     # 3. Extract Static Data (Transposed Layout)
     for sheet_name, country in zip(STATIC_SHEET_NAME, COUNTRIES):
-        # Load raw sheet without header to handle transposed layout
         df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None, engine="openpyxl")
-        
-        # Row 1 has tickers (Type)
         tickers = df_raw.iloc[1, 1:].tolist()
-        # Column 0 has attribute codes (e.g., WC06010, WC18272, CGBSDP060)
         attr_codes = df_raw.iloc[2:, 0].tolist()
         
-        # Extract data into a wide format
         static_data = []
         for i, ticker in enumerate(tickers):
             if pd.isna(ticker) or str(ticker) == "Date":
@@ -310,17 +301,13 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
                 "country": country_name,
             }
             
-            # Extract each attribute for this ticker
             for j, code in enumerate(attr_codes):
                 attr_name = WORLDSCOPE_TO_ATTRIBUTE.get(code)
-                if not attr_name:
-                    continue
+                if not attr_name: continue
                 
                 attr_col = ATTRIBUTE_COLUMNS.get(attr_name)
-                if not attr_col:
-                    continue
+                if not attr_col: continue
                 
-                # Value is at row j+2, column i+1
                 val = df_raw.iloc[j + 2, i + 1]
                 row_data[attr_col] = val
                 
@@ -377,155 +364,15 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
             aggfunc='first'
         ).reset_index()
 
-        all_esg_cols = list(ESG_ATTRIBUTE_COLUMNS.values())
-        for col in all_esg_cols:
-            if col not in df_wide.columns:
-                df_wide[col] = np.nan
-
-        # Strip whitespace from string columns
-        for col in df_wide.select_dtypes(include='object').columns:
-            df_wide[col] = df_wide[col].apply(lambda x: x.strip() if isinstance(x, str) else x)
-
         esg_path = os.path.join(output_dir, "esg_data.csv")
         header = not os.path.exists(esg_path)
         df_wide.to_csv(esg_path, index=False, mode='a', header=header)
-
-    # 5. Extract Corporational Governance Data (Transposed Layout)
-    for sheet_name, country in zip(GOVERNANCE_SHEET_NAME, COUNTRIES):
-        # Load raw sheet without header to handle transposed layout
-        df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None, engine="openpyxl")
-        
-        # Row 1 has tickers (Type)
-        tickers = df_raw.iloc[1, 1:].tolist()
-        # Column 0 has attribute codes (e.g., WC06010, WC18272, CGBSDP060)
-        attr_codes = df_raw.iloc[2:, 0].tolist()
-        
-        # Extract data into a wide format
-        static_data = []
-        for i, ticker in enumerate(tickers):
-            if pd.isna(ticker) or str(ticker) == "Date":
-                continue
-                
-            ticker_str = str(ticker)
-            country_name = country
-            if sheet_name == "Sheet35":
-                if ticker_str.endswith(".BK"): country_name = "Thailand"
-                elif ticker_str.endswith(".HM"): country_name = "Vietnam"
-                elif ticker_str.endswith(".KL"): country_name = "Malaysia"
-                elif ticker_str.endswith(".SI"): country_name = "Singapore"
-                elif ticker_str.endswith(".PS"): country_name = "Philippines"
-                elif ticker_str.endswith(".JK"): country_name = "Indonesia"
-
-            row_data = {
-                "ticker": ticker_str,
-                "country": country_name,
-            }
-            
-            # Extract each attribute for this ticker
-            for j, code in enumerate(attr_codes):
-                attr_name = WORLDSCOPE_TO_ATTRIBUTE.get(code)
-                if not attr_name:
-                    continue
-                
-                attr_col = ATTRIBUTE_COLUMNS.get(attr_name)
-                if not attr_col:
-                    continue
-                
-                # Value is at row j+2, column i+1
-                val = df_raw.iloc[j + 2, i + 1]
-                row_data[attr_col] = val
-                
-            static_data.append(row_data)
-        
-        governance_path = os.path.join(output_dir, "governance_data.csv")
-        header = not os.path.exists(governance_path)
-        pd.DataFrame(static_data).to_csv(governance_path, index=False, mode='a', header=header)
-
-
-# def load_raw_panel_data() -> pd.DataFrame:
-#     """Load prepared raw panel data."""
-#     from asean_green_bonds.config import RAW_DATA_FILES
-#     panel_file = RAW_DATA_FILES["panel"]
-#     if not panel_file.exists():
-#         raise FileNotFoundError(f"Panel data not found: {panel_file}")
-    
-#     df = pd.read_csv(panel_file)
-#     df["Year"] = df["Year"].astype(int)
-#     # Rename ticker to ric for backward compatibility in the package
-#     if "ticker" in df.columns:
-#         df = df.rename(columns={"ticker": "ric"})
-#     return df
-
-
-# def load_esg_panel_data() -> pd.DataFrame:
-#     """Load ESG panel data."""
-#     from asean_green_bonds.config import RAW_DATA_FILES
-#     esg_file = RAW_DATA_FILES["esg"]
-#     if not esg_file.exists():
-#         raise FileNotFoundError(f"ESG data not found: {esg_file}")
-    
-#     df = pd.read_csv(esg_file)
-#     df["Year"] = df["Year"].astype(int)
-#     # Ensure isin/ric naming consistency
-#     if "ticker" in df.columns:
-#         df = df.rename(columns={"ticker": "isin"})
-#     return df
-
-
-# def load_market_data() -> pd.DataFrame:
-#     """Load combined market data (identifiers)."""
-#     from asean_green_bonds.config import RAW_DATA_FILES
-#     market_files = RAW_DATA_FILES["market_data"]
-#     dfs = []
-#     for country, filepath in market_files.items():
-#         if filepath.exists():
-#             dfs.append(pd.read_csv(filepath))
-    
-#     if not dfs:
-#         return pd.DataFrame(columns=["name", "ric", "org_permid", "isin"])
-    
-#     market_data = pd.concat(dfs, ignore_index=True)
-#     if "currency" in market_data.columns:
-#         market_data = market_data.drop("currency", axis=1)
-#     return market_data
-
-
-# def load_green_bonds_data(asean_only: bool = True) -> pd.DataFrame:
-#     """Load green bonds issuance data."""
-#     from asean_green_bonds.config import RAW_DATA_FILES
-#     gb_file = RAW_DATA_FILES["green_bonds"]
-#     if not gb_file.exists():
-#         raise FileNotFoundError(f"Green bonds data not found: {gb_file}")
-    
-#     gb = pd.read_csv(gb_file)
-#     if asean_only:
-#         asean_countries = {"Malaysia", "Indonesia", "Philippines", "Singapore", "Thailand", "Vietnam", "Viet Nam"}
-#         gb = gb[gb["Issuer/Borrower Nation"].isin(asean_countries)].copy()
-    
-#     gb["Year"] = pd.to_datetime(gb["Dates: Issue Date"]).dt.year
-#     gb["is_certified"] = gb["Primary Use Of Proceeds"].eq("Green Bond Purposes").astype(int)
-#     gb = gb[["Issuer/Borrower PermID", "Year", "Proceeds Amount This Market", "is_certified"]]
-#     gb = gb.rename(columns={"Issuer/Borrower PermID": "org_permid"})
-#     gb["org_permid"] = gb["org_permid"].apply(lambda x: str(int(x)) if pd.notna(x) else np.nan)
-#     return gb
-
-
-# def load_series_data() -> pd.DataFrame:
-#     """Load series (industry) data."""
-#     from asean_green_bonds.config import RAW_DATA_FILES
-#     series_file = RAW_DATA_FILES["series_data"]
-#     if not series_file.exists():
-#         raise FileNotFoundError(f"Series data not found: {series_file}")
-    
-#     df = pd.read_csv(series_file)
-#     df = df[['ticker', 'gic']].rename(columns={'ticker': 'ric'})
-#     return df.drop_duplicates(subset=['ric'])
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Prepare Refinitiv data.")
-    parser.add_argument("--file", type=str, default="data2503.xlsx", help="Source Excel file")
+    parser.add_argument("--file", type=str, default="data2603.xlsx", help="Source Excel file")
     args = parser.parse_args()
 
     file_path = args.file

@@ -66,17 +66,13 @@
 | `ENERO24V` | CO₂ Equivalent Emissions | Total CO₂-equivalent emissions (may overlap with `ENERO132V` depending on scope definition) |
 | `ENPIDP023` | Environmental Innovation | Data point measuring environmental innovation initiatives or patents (Porter Hypothesis proxy) |
 
-> **Coverage warning:** Some `ENERO*` and `ENERDP*` codes return NA even for major companies. Test each code on 5–10 companies before running the full panel pull. Fallback for emissions: `ENERDP023` (Total CO₂ Emissions direct) has wider coverage.
-
----
-
 ## 4. Time Series — Corporate Governance (CG / ASSET4)
 
 | Code | Name | Description |
 |---|---|---|
 | `CGBSDP060` | Board Size | Total number of directors on the board |
-| `CGBSDP0012` | Board Independence % | Percentage of independent/non-executive directors (Policy Board Independence) |
-| `CGBSO09V` | CEO–Chairman Separation | Binary flag. ⚠ **Recode after download:** `CEO_Duality = 1 − CGBSO09V` so that 1 = CEO also chairs the board (standard Agency Theory coding) |
+| `CGBSDP0012` | Board Independence Flag | Binary Y/N or numeric flag indicating board independence policy |
+| `CGBSO09V` | CEO–Chairman Separation Flag | Binary Y/N or numeric flag. |
 
 ---
 
@@ -86,8 +82,8 @@
 
 | Code | Name | Description |
 |---|---|---|
-| `WC06010` | Country of Incorporation | 2-letter ISO country code. Use for ASEAN country filter in panel |
-| `WC18272` | Industry / Sector Classification | Worldscope industry group code. Use for industry fixed effects in regression |
+| `WC06010` | Industry / Sector Classification | Worldscope industry group code. Use for industry fixed effects in regression |
+| `WC18272` | Date of Incorporation | Year the company was founded/incorporated |
 
 ---
 

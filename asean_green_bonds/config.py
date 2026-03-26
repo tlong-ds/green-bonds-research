@@ -17,10 +17,14 @@ OUTPUT_DIR = PROJECT_ROOT / "outputs"
 
 # Input files
 RAW_DATA_FILES = {
-    "panel": DATA_DIR / "panel_data.csv",
-    "esg": DATA_DIR / "esg_panel_data.csv",
     "green_bonds": DATA_DIR / "green-bonds.csv",
-    "market_data": {
+    "financial_data": DATA_DIR / "financial_data.csv",
+    "market_data": DATA_DIR / "market_data.csv",
+    "static_data": DATA_DIR / "static_data.csv",
+    "esg_data": DATA_DIR / "esg_data.csv",
+    "governance_data": DATA_DIR / "governance_data.csv",
+    
+    "asean_data": {
         "vietnam": DATA_DIR / "vn-market.csv",
         "thailand": DATA_DIR / "tl-market.csv",
         "malaysia": DATA_DIR / "ml-market.csv",
@@ -29,7 +33,6 @@ RAW_DATA_FILES = {
         "indonesia": DATA_DIR / "indo-market.csv",
         "other": DATA_DIR / "other-market.csv",
     },
-    "series_data": DATA_DIR / "series_data.csv",
 }
 
 # Output files
