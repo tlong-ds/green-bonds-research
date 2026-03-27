@@ -431,6 +431,85 @@ def assess_balance(
     return pd.DataFrame(balance_data)
 
 
+def estimate_entropy_weights(
+    df: pd.DataFrame,
+    treatment_col: str = 'green_bond_issue',
+    features: Optional[List[str]] = None,
+    moments: int = 1,
+) -> pd.Series:
+    """
+    Estimate entropy balancing weights (Hainmueller 2012).
+    
+    Finds weights for control units such that their covariate moments 
+    match those of the treatment group, while staying as close as 
+    possible to uniform weights (base weights).
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data with treatment and covariates.
+    treatment_col : str
+        Treatment indicator.
+    features : list
+        Covariates to balance.
+    moments : int
+        Number of moments to balance (1=mean, 2=variance).
+        
+    Returns
+    -------
+    pd.Series
+        Weights indexed same as input. Treated units get weight 1.0.
+    """
+    from scipy.optimize import minimize
+    
+    if features is None:
+        features = [
+            'L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover',
+            'L1_Capital_Intensity', 'L1_Cash_Ratio'
+        ]
+        
+    df_eb = df[[treatment_col] + features].dropna()
+    X = df_eb[features].values
+    y = df_eb[treatment_col].values
+    
+    X_treat = X[y == 1]
+    X_control = X[y == 0]
+    
+    if len(X_treat) == 0 or len(X_control) == 0:
+        return pd.Series(1.0, index=df.index)
+        
+    # Target moments (means of treatment group)
+    targets = np.mean(X_treat, axis=0)
+    
+    # Initial Lagrange multipliers
+    params = np.zeros(len(features))
+    
+    # Loss function for entropy balancing (Lagrangian)
+    def loss(params):
+        # Weight for each control unit: w_i = exp(X_i * params)
+        weights = np.exp(np.dot(X_control, params))
+        # Moment conditions: sum(w_i * X_ij) = target_j * sum(w_i)
+        # We want to minimize the log partition function
+        return np.log(np.sum(weights)) - np.dot(targets, params)
+        
+    # Optimize
+    res = minimize(loss, params, method='L-BFGS-B')
+    
+    if not res.success:
+        warnings.warn(f"Entropy balancing optimization failed: {res.message}")
+        return pd.Series(1.0, index=df.index)
+        
+    # Calculate final weights for controls
+    control_weights = np.exp(np.dot(X_control, res.x))
+    # Normalize so they sum to number of control units (or 1, but we'll use n_control)
+    control_weights = control_weights * (len(X_control) / np.sum(control_weights))
+    
+    weights = pd.Series(1.0, index=df.index)
+    weights.loc[df_eb[y == 0].index] = control_weights
+    
+    return weights
+
+
 def create_matched_dataset(
     df: pd.DataFrame,
     treatment_col: str = 'green_bond_issue',

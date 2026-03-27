@@ -581,6 +581,109 @@ def calculate_moulton_factor(
     return moulton
 
 
+def estimate_stacked_did(
+    df: pd.DataFrame,
+    outcome: str,
+    treatment_col: str = 'green_bond_issue',
+    entity_col: str = 'org_permid',
+    time_col: str = 'Year',
+    control_vars: Optional[List[str]] = None,
+    window: Tuple[int, int] = (-2, 2),
+    cluster_entity: bool = True,
+) -> Dict[str, Any]:
+    """
+    Estimate treatment effects using Stacked DiD (Cengiz et al., 2019).
+    
+    This approach creates a 'clean' experiment for each treatment cohort,
+    stacking them to estimate a single coefficient while avoiding bias
+    from already-treated units in the control group.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Panel data.
+    outcome : str
+        Outcome variable.
+    treatment_col : str
+        Binary indicator for first issuance (1 in year of issuance, 0 otherwise).
+    entity_col : str
+        Firm identifier.
+    time_col : str
+        Year identifier.
+    control_vars : list
+        Control variables.
+    window : tuple
+        Relative time window (pre, post) around treatment.
+        
+    Returns
+    -------
+    dict
+        Regression results.
+    """
+    df = df.copy()
+    
+    # Identify treatment year for each firm
+    treatment_years = df[df[treatment_col] == 1].groupby(entity_col)[time_col].min()
+    
+    # List of all firms that were never treated (always controls)
+    never_treated = list(set(df[entity_col].unique()) - set(treatment_years.index))
+    
+    stacks = []
+    
+    # For each treatment year, create a sub-experiment
+    for treat_year in treatment_years.unique():
+        treated_firms = treatment_years[treatment_years == treat_year].index
+        
+        # Window around treatment
+        year_min, year_max = treat_year + window[0], treat_year + window[1]
+        
+        # Potential controls: firms never treated OR treated at least 1 year after window
+        future_treated = treatment_years[treatment_years > year_max].index
+        control_firms = list(never_treated) + list(future_treated)
+        
+        # Create sub-experiment stack
+        stack_df = df[df[entity_col].isin(list(treated_firms) + control_firms)].copy()
+        stack_df = stack_df[(stack_df[time_col] >= year_min) & (stack_df[time_col] <= year_max)]
+        
+        if len(stack_df[stack_df[entity_col].isin(treated_firms)]) > 0:
+            stack_df['stack_id'] = f"cohort_{treat_year}"
+            stack_df['relative_time'] = stack_df[time_col] - treat_year
+            stack_df['post'] = (stack_df['relative_time'] >= 0).astype(int)
+            stack_df['treated'] = stack_df[entity_col].isin(treated_firms).astype(int)
+            stack_df['treatment_effect'] = stack_df['post'] * stack_df['treated']
+            stacks.append(stack_df)
+            
+    if not stacks:
+        return {'error': 'No treatment cohorts found for stacking'}
+    
+    stacked_df = pd.concat(stacks, ignore_index=True)
+    
+    # Fixed effects: stack-by-entity and stack-by-year
+    stacked_df['stack_entity'] = stacked_df['stack_id'].astype(str) + "_" + stacked_df[entity_col].astype(str)
+    stacked_df['stack_year'] = stacked_df['stack_id'].astype(str) + "_" + stacked_df[time_col].astype(str)
+    
+    # Regression
+    reg_df = stacked_df.set_index(['stack_entity', 'stack_year'])
+    exog_vars = ['treatment_effect'] + (control_vars or [])
+    exog_vars = [v for v in exog_vars if v in reg_df.columns]
+    
+    try:
+        model = PanelOLS(reg_df[outcome], reg_df[exog_vars], entity_effects=True, time_effects=True)
+        results = model.fit(cov_type='clustered', cluster_entity=cluster_entity)
+        
+        return {
+            'outcome': outcome,
+            'coefficient': results.params['treatment_effect'],
+            'std_error': results.std_errors['treatment_effect'],
+            'p_value': results.pvalues['treatment_effect'],
+            'n_obs': int(results.nobs),
+            'n_stacks': len(stacks),
+            'model': results
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
 def parallel_trends_test(
     df: pd.DataFrame,
     outcome: str,

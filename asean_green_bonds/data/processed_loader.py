@@ -26,4 +26,4 @@ def load_processed_data(which: str = "full_panel") -> pd.DataFrame:
     if not filepath.exists():
         return pd.DataFrame()
 
-    return pd.read_csv(filepath)
+    return pd.read_csv(filepath, low_memory=False)

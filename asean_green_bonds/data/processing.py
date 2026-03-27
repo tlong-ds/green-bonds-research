@@ -1317,13 +1317,16 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
     # Merge Green Bonds (firm-year aggregates)
     # ------------------------------------------------------------------
     if not green_bonds_df.empty and not market_map.empty:
-        gb_work = green_bonds_df.copy()
+        from .feature_engineering import engineer_psm_attributes
+        
+        # Bond-level engineering for track record and tangibility
+        gb_work, _ = engineer_psm_attributes(green_bonds_df, verbose=False)
 
-        # Drop known normalized/derived fields
+        # Drop known derived/normalized fields that aren't the primary PSM attributes
         normalized_cols = [
             "is_authentic", "esg_improvement", "esg_pvalue", "n_pre_obs", "n_post_obs",
             "data_quality", "icma_confidence", "issuer_nation", "issuer_sector",
-            "issuer_type", "issuer_track_record", "has_green_framework", "esg_component",
+            "issuer_type", "esg_component",
             "cert_component", "issuer_component", "authenticity_score", "authenticity_category",
             "esg_score_pre_issuance", "esg_score_issuance_year", "esg_score_post_issuance",
             "environmental_investment", "has_esg_data", "esg_data_source",
@@ -1378,8 +1381,14 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
         gb_cat_cols = [c for c in gb_work.columns if c not in gb_keys + gb_num_cols]
 
         agg_numeric = {}
+        max_cols = ["has_green_framework", "issuer_track_record", "prior_green_bonds", "asset_tangibility"]
         for col in gb_num_cols:
-            agg_numeric[col] = "sum" if col in sum_cols else "mean"
+            if col in sum_cols:
+                agg_numeric[col] = "sum"
+            elif col in max_cols:
+                agg_numeric[col] = "max"
+            else:
+                agg_numeric[col] = "mean"
 
         gb_agg_num = gb_work.groupby(gb_keys, as_index=False)[gb_num_cols].agg(agg_numeric) if gb_num_cols else pd.DataFrame()
         gb_agg_cat = gb_work.groupby(gb_keys, as_index=False)[gb_cat_cols].agg(_first_non_null) if gb_cat_cols else pd.DataFrame()
@@ -1454,14 +1463,24 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
     if drop_cols:
         panel = panel.drop(columns=drop_cols)
 
-    # Propagate certification/greenwashing attributes firm-wide (so we can compare certified vs non-certified firms)
+    # Propagate certification/greenwashing attributes firm-wide
     if "org_permid" in panel.columns:
+        # Standard propagation list
         hetero_cols = ["is_certified_majority", "share_certified_proceeds", "self_labeled_share"]
-        for col in hetero_cols:
+        # PSM attributes propagation
+        psm_cols = ["has_green_framework", "asset_tangibility", "issuer_track_record", "prior_green_bonds"]
+        
+        for col in hetero_cols + psm_cols:
             if col in panel.columns:
                 # Propagate max value per firm across all their years
                 panel[col] = panel.groupby("org_permid")[col].transform("max")
-                panel[col] = panel[col].fillna(0)
+                
+                # Different fallbacks: asset_tangibility uses SECTOR proxy mean, others use 0
+                if col == "asset_tangibility":
+                    from .feature_engineering import get_default_tangibility
+                    panel[col] = panel[col].fillna(get_default_tangibility())
+                else:
+                    panel[col] = panel[col].fillna(0)
 
     # Write output if requested
     if write_path is None:

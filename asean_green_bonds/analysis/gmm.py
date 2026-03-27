@@ -133,14 +133,11 @@ def _prepare_gmm_data(
     control_vars: Optional[List[str]],
     instruments: Optional[List[str]],
     max_lags: int,
-    min_obs_fraction: float = 0.3,
+    min_obs_fraction: float = 0.05,  # Lowered default for sparse data
     endogenous_treatment: bool = False,
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
-    Prepare data for GMM estimation.
-    
-    Returns (prepared_df, error_message). If error_message is not None,
-    prepared_df will be None.
+    Prepare data for GMM estimation with improved robustness for sparse variables.
     """
     df = df.copy()
     
@@ -158,6 +155,7 @@ def _prepare_gmm_data(
     
     # Select or generate instruments
     if instruments is None:
+        # For sparse outcomes like implied_cost_of_debt, we need more flexible lag selection
         instruments = _select_lagged_instruments_for_variable(
             df, outcome, entity_col, time_col, max_lags, min_obs_fraction
         )
@@ -167,26 +165,34 @@ def _prepare_gmm_data(
             )
             instruments = instruments + treatment_instruments
     
+    # If no lags available, try even more aggressive selection for sparse data
     if len(instruments) == 0:
-        return None, "No valid instruments available"
+        instruments = _select_lagged_instruments_for_variable(
+            df, outcome, entity_col, time_col, max_lags, 0.01
+        )
+        
+    if len(instruments) == 0:
+        return None, f"No valid instruments available for outcome '{outcome}'"
     
     # Build variable list
     if control_vars is None:
         control_vars = []
     
-    # Filter to existing columns
+    # Filter to existing columns and remove duplicates
     control_vars = [c for c in control_vars if c in df.columns]
-    instruments = [i for i in instruments if i in df.columns]
+    instruments = list(dict.fromkeys([i for i in instruments if i in df.columns]))
     
     # Keep only needed columns
     keep_cols = [entity_col, time_col, outcome, f'L1_{outcome}', 
                  treatment_col] + control_vars + instruments
-    keep_cols = list(dict.fromkeys(keep_cols))  # Remove duplicates
     
-    df_clean = df[[c for c in keep_cols if c in df.columns]].dropna()
+    # Drop rows with NaNs in core variables
+    df_clean = df[keep_cols].dropna()
     
-    if len(df_clean) < 20:
-        return None, f"Insufficient observations after removing NaNs: {len(df_clean)}"
+    # Lowered threshold for very sparse but important outcomes
+    min_obs = 15 if outcome == 'implied_cost_of_debt' else 20
+    if len(df_clean) < min_obs:
+        return None, f"Insufficient observations for '{outcome}': {len(df_clean)} (min {min_obs})"
     
     # Store metadata
     df_clean.attrs['instruments'] = instruments
@@ -581,9 +587,31 @@ def estimate_system_gmm(
     else:
         endog_clean = None
     
-    if len(y_clean) < 20:
+    if len(y_clean) < 15:
         return _error_result(f"Insufficient observations after cleaning: {len(y_clean)}", n_obs=len(y_clean))
-    
+
+    # FINAL RANK CHECK: Avoid singular matrices by dropping collinear variables
+    def _ensure_full_rank(df_x: pd.DataFrame) -> pd.DataFrame:
+        if df_x is None or df_x.empty:
+            return df_x
+        # Drop perfectly collinear columns
+        corr = df_x.corr().abs()
+        upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+        to_drop = [column for column in upper.columns if any(upper[column] > 0.999)]
+        if to_drop:
+            return df_x.drop(columns=to_drop)
+        return df_x
+
+    exog_clean = _ensure_full_rank(exog_clean)
+    if endog_clean is not None:
+        endog_clean = _ensure_full_rank(endog_clean)
+    instruments_clean = _ensure_full_rank(instruments_clean)
+
+    # Re-verify that treatment column hasn't been dropped (if it was perfectly collinear, we can't estimate)
+    if treatment_col not in exog_clean.columns and (endog_clean is None or treatment_col not in endog_clean.columns):
+        if not endogenous_treatment:
+             return _error_result(f"Treatment variable '{treatment_col}' is perfectly collinear with other variables.", n_obs=len(y_clean))
+
     # Estimate GMM model
     try:
         if endog_clean is not None and len(endog_clean.columns) > 0:

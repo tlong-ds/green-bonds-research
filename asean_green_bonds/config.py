@@ -17,7 +17,7 @@ OUTPUT_DIR = PROJECT_ROOT / "outputs"
 
 # Input files
 RAW_DATA_FILES = {
-    "green_bonds": DATA_DIR / "green-bonds.csv",
+    "green_bonds": DATA_DIR / "green_bonds_authenticated.csv",
     "financial_data": DATA_DIR / "financial_data.csv",
     "market_data": DATA_DIR / "market_data.csv",
     "static_data": DATA_DIR / "static_data.csv",
