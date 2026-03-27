@@ -18,7 +18,7 @@ def placebo_test(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     placebo_shift: int = 1,
 ) -> Dict[str, Any]:
@@ -34,7 +34,7 @@ def placebo_test(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     placebo_shift : int, optional
@@ -100,7 +100,7 @@ def leave_one_out_cv(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
 ) -> Dict[str, Any]:
     """
@@ -117,7 +117,7 @@ def leave_one_out_cv(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
         
@@ -181,7 +181,7 @@ def specification_sensitivity(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     control_sets: Optional[List[List[str]]] = None,
 ) -> pd.DataFrame:
@@ -197,7 +197,7 @@ def specification_sensitivity(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     control_sets : list, optional
@@ -273,7 +273,7 @@ def heterogeneous_effects_analysis(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     heterogeneity_var: str = 'is_certified_majority',
     n_bins: int = 0,
@@ -290,7 +290,7 @@ def heterogeneous_effects_analysis(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     heterogeneity_var : str, optional
@@ -356,7 +356,7 @@ def heterogeneous_effects_analysis(
 
 def detect_survivorship_bias(
     df: pd.DataFrame,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     recent_years: Optional[List[int]] = None,
     early_years: Optional[List[int]] = None,
@@ -371,7 +371,7 @@ def detect_survivorship_bias(
     df : pd.DataFrame
         Panel data.
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     recent_years : list, optional
@@ -413,7 +413,7 @@ def run_diagnostics_battery(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
 ) -> Dict[str, Any]:
     """
@@ -428,7 +428,7 @@ def run_diagnostics_battery(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
         

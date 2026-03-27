@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore', category=AbsorbingEffectWarning, module='linea
 
 def prepare_panel_for_regression(
     df: pd.DataFrame,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     set_index: bool = True,
 ) -> pd.DataFrame:
@@ -31,7 +31,7 @@ def prepare_panel_for_regression(
     df : pd.DataFrame
         Unbalanced or irregular panel data.
     entity_col : str, optional
-        Entity identifier column (default: 'ric').
+        Entity identifier column (default: 'org_permid').
     time_col : str, optional
         Time period column (default: 'Year').
     set_index : bool, optional
@@ -60,7 +60,7 @@ def estimate_did(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     specification: str = 'entity_fe',
@@ -80,7 +80,7 @@ def estimate_did(
     treatment_col : str, optional
         Treatment indicator column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time period identifier (default: 'Year').
     control_vars : list, optional
@@ -430,7 +430,7 @@ def run_multiple_outcomes(
     df: pd.DataFrame,
     outcomes: List[str],
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     specifications: Optional[List[str]] = None,
@@ -449,7 +449,7 @@ def run_multiple_outcomes(
     treatment_col : str, optional
         Treatment indicator (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     control_vars : list, optional
@@ -513,7 +513,7 @@ def run_multiple_outcomes(
 def calculate_moulton_factor(
     df: pd.DataFrame,
     outcome: str,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     treatment_col: str = 'green_bond_active',
 ) -> float:
@@ -530,7 +530,7 @@ def calculate_moulton_factor(
     outcome : str
         Outcome variable.
     entity_col : str, optional
-        Entity/cluster identifier (default: 'ric').
+        Entity/cluster identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     treatment_col : str, optional
@@ -575,7 +575,7 @@ def parallel_trends_test(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     leads: int = 3,
     lags: int = 3,
@@ -592,7 +592,7 @@ def parallel_trends_test(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     leads : int, optional

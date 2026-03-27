@@ -184,16 +184,16 @@ def merge_industry_data(panel_df: pd.DataFrame, series_df: pd.DataFrame) -> pd.D
     Parameters
     ----------
     panel_df : pd.DataFrame
-        Panel data with 'ric'.
+        Panel data with 'org_permid'.
     series_df : pd.DataFrame
-        Series data with 'ric' and 'gic'.
+        Series data with 'org_permid' and 'gic'.
         
     Returns
     -------
     pd.DataFrame
         Panel with GIC industry classification.
     """
-    return pd.merge(panel_df, series_df, on="ric", how="left")
+    return pd.merge(panel_df, series_df, on="org_permid", how="left")
 
 
 def filter_asean_firms_and_years(
@@ -218,16 +218,29 @@ def filter_asean_firms_and_years(
     pd.DataFrame
         Filtered panel data.
     """
-    df = df[df['country'] != 'Other'].copy()
-    df['Year'] = pd.to_numeric(df['Year'], errors='coerce')
-    df = df[(df['Year'] >= min_year) & (df['Year'] <= max_year)].copy()
+    # Filter by specific ASEAN countries instead of just dropping 'Other'
+    asean_countries = [
+        'Vietnam', 'Thailand', 'Malaysia', 
+        'Singapore', 'Philippines', 'Indonesia'
+    ]
+    
+    if 'country' in df.columns:
+        # Case-insensitive matching
+        mask = df['country'].astype(str).str.title().isin(asean_countries)
+        df = df[mask].copy()
+    else:
+        df = df.copy()
+
+    if 'Year' in df.columns:
+        df['Year'] = pd.to_numeric(df['Year'], errors='coerce')
+        df = df[(df['Year'] >= min_year) & (df['Year'] <= max_year)].copy()
     
     return df
 
 
 def handle_missing_values(
     df: pd.DataFrame,
-    firm_col: str = 'ticker',
+    firm_col: str = 'org_permid',
     forward_fill_cols: Optional[list] = None,
     min_years_per_firm: int = 3,
 ) -> pd.DataFrame:
@@ -239,7 +252,7 @@ def handle_missing_values(
     df : pd.DataFrame
         Panel data with firm identifier column.
     firm_col : str, optional
-        Name of firm identifier column (default: 'ticker'). Can be 'ric' or 'ticker'.
+        Name of firm identifier column (default: 'org_permid'). Can be 'ric' or 'ticker'.
     forward_fill_cols : list, optional
         Columns to forward fill. If None, uses financial variables.
     min_years_per_firm : int, optional
@@ -427,7 +440,7 @@ def winsorize_outliers(
     For 1st/99th percentiles, use limits=(0.01, 0.01) not (0.01, 0.99)!
     """
     protected_cols = {
-        'ric', 'country', 'Year', 'gic', 'company',
+        'org_permid', 'ric', 'country', 'Year', 'gic', 'company',
         'has_green_bonds', 'is_certified_majority', 'share_certified_proceeds', 'self_labeled_share',
         'green_bond_issue', 'green_bond_active', 'certified_bond_active',
     }
@@ -639,7 +652,7 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_lagged_features(
     df: pd.DataFrame,
-    firm_col: str = 'ticker',
+    firm_col: str = 'org_permid',
     vars_to_lag: Optional[list] = None,
     lags: Optional[list] = None,
 ) -> pd.DataFrame:
@@ -651,7 +664,7 @@ def create_lagged_features(
     df : pd.DataFrame
         Panel data with firm identifier and 'Year' columns, sorted by firm and year.
     firm_col : str, optional
-        Name of firm identifier column (default: 'ticker'). Can be 'ric' or 'ticker'.
+        Name of firm identifier column (default: 'org_permid'). Can be 'ric' or 'ticker'.
     vars_to_lag : list, optional
         Variables to lag. If None, lags key financial ratios and outcomes.
     lags : list, optional
@@ -776,7 +789,7 @@ def scale_numeric_features(
 
 def filter_survived_firms(
     df: pd.DataFrame,
-    firm_col: str = 'ric',
+    firm_col: str = 'org_permid',
     time_col: str = 'Year',
     recent_years: Optional[List[int]] = None,
     min_recent_observations: int = 1,
@@ -794,7 +807,7 @@ def filter_survived_firms(
     df : pd.DataFrame
         Panel data with firm identifier and time columns.
     firm_col : str, optional
-        Firm identifier column (default: 'ric').
+        Firm identifier column (default: 'org_permid').
     time_col : str, optional
         Year column (default: 'Year').
     recent_years : list of int, optional
@@ -838,7 +851,7 @@ def filter_survived_firms(
 
 def calculate_survivorship_weights(
     df: pd.DataFrame,
-    firm_col: str = 'ric',
+    firm_col: str = 'org_permid',
     time_col: str = 'Year',
     recent_years: Optional[List[int]] = None,
     early_years: Optional[List[int]] = None,
@@ -856,7 +869,7 @@ def calculate_survivorship_weights(
     df : pd.DataFrame
         Panel data with firm identifier and time columns.
     firm_col : str, optional
-        Firm identifier column (default: 'ric').
+        Firm identifier column (default: 'org_permid').
     time_col : str, optional
         Year column (default: 'Year').
     recent_years : list of int, optional
@@ -1017,7 +1030,7 @@ def merge_esg_scores_from_panel(bonds_df: pd.DataFrame, esg_df: pd.DataFrame) ->
 def prepare_analysis_sample(
     df: pd.DataFrame,
     survivorship_mode: str = 'ignore',
-    firm_col: str = 'ric',
+    firm_col: str = 'org_permid',
     time_col: str = 'Year',
     recent_years: Optional[List[int]] = None,
     **kwargs
@@ -1038,7 +1051,7 @@ def prepare_analysis_sample(
         - 'weight': Keep all firms, add survivorship_weight column
         - 'ignore': No survivorship handling (backward compatible)
     firm_col : str, optional
-        Firm identifier column (default: 'ric').
+        Firm identifier column (default: 'org_permid').
     time_col : str, optional
         Year column (default: 'Year').
     recent_years : list of int, optional
@@ -1192,6 +1205,13 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
         panel = panel.rename(columns={"ticker": "ric"})
     panel["Year"] = pd.to_numeric(panel["Year"], errors="coerce")
 
+    # Map raw base panel to org_permid
+    if not market_map.empty and "org_permid" in market_map.columns and "ric" in market_map.columns:
+        mapping = market_map[["ric", "org_permid"]].drop_duplicates(subset=["ric"])
+        panel = panel.merge(mapping, on="ric", how="left")
+    else:
+        panel["org_permid"] = np.nan
+
     # RIC frequency for ambiguity resolution
     ric_counts = panel["ric"].value_counts(dropna=True)
 
@@ -1231,25 +1251,20 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
     esg_work["isin"] = esg_work["isin"].astype(str).str.strip()
     esg_work["Year"] = pd.to_numeric(esg_work["Year"], errors="coerce")
 
-    if not market_map.empty and "isin" in market_map.columns:
-        map_esg = market_map[["isin", "country", "ric"]].dropna()
-        map_esg["ric_count"] = map_esg["ric"].map(ric_counts).fillna(0)
-        map_esg = (
-            map_esg.sort_values(["isin", "country", "ric_count", "ric"], ascending=[True, True, False, True])
-            .drop_duplicates(subset=["isin", "country"], keep="first")
-        )
+    if not market_map.empty and "isin" in market_map.columns and "org_permid" in market_map.columns:
+        map_esg = market_map[["isin", "country", "org_permid"]].dropna()
+        map_esg = map_esg.drop_duplicates(subset=["isin", "country"], keep="first")
         esg_work = esg_work.merge(map_esg, on=["isin", "country"], how="left")
-        esg_work = esg_work.dropna(subset=["ric"])
-        esg_work["ric"] = esg_work["ric"].astype(str)
+        esg_work = esg_work.dropna(subset=["org_permid"])
     else:
-        esg_work["ric"] = np.nan
+        esg_work["org_permid"] = np.nan
 
     esg_num_cols = esg_work.select_dtypes(include=[np.number]).columns.tolist()
-    esg_group_cols = ["ric", "Year"]
+    esg_group_cols = ["org_permid", "Year"]
     esg_num_cols = [c for c in esg_num_cols if c not in esg_group_cols]
     esg_cat_cols = [c for c in esg_work.columns if c not in esg_group_cols + esg_num_cols]
     # Avoid overwriting panel's country/identifier columns
-    for drop_col in ["country", "isin", "company"]:
+    for drop_col in ["country", "isin", "company", "ric"]:
         if drop_col in esg_cat_cols:
             esg_cat_cols.remove(drop_col)
     esg_agg_num = esg_work.groupby(esg_group_cols, as_index=False)[esg_num_cols].mean() if esg_num_cols else pd.DataFrame()
@@ -1261,7 +1276,7 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
         esg_agg = esg_agg_num if not esg_agg_num.empty else esg_agg_cat
 
     if not esg_agg.empty:
-        panel = panel.merge(esg_agg, on=["ric", "Year"], how="left")
+        panel = panel.merge(esg_agg, on=["org_permid", "Year"], how="left")
 
     # ------------------------------------------------------------------
     # Merge GDP/Inflation
@@ -1328,20 +1343,13 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
                 use_proxy_if_missing=False,
             )
 
-        # Map org_permid -> ric
-        if "Issuer/Borrower PermID" in gb_work.columns and "org_permid" in market_map.columns:
-            gb_work["Issuer/Borrower PermID"] = pd.to_numeric(gb_work["Issuer/Borrower PermID"], errors="coerce")
-            map_gb = market_map[["org_permid", "ric"]].dropna()
-            map_gb["ric_count"] = map_gb["ric"].map(ric_counts).fillna(0)
-            map_gb = (
-                map_gb.sort_values(["org_permid", "ric_count", "ric"], ascending=[True, False, True])
-                .drop_duplicates(subset=["org_permid"], keep="first")
-            )
-            gb_work = gb_work.merge(map_gb, left_on="Issuer/Borrower PermID", right_on="org_permid", how="left")
-            gb_work = gb_work.dropna(subset=["ric", "issue_year"])
+        # Map Issuer/Borrower PermID naturally to org_permid
+        if "Issuer/Borrower PermID" in gb_work.columns:
+            gb_work["org_permid"] = pd.to_numeric(gb_work["Issuer/Borrower PermID"], errors="coerce")
+            gb_work = gb_work.dropna(subset=["org_permid", "issue_year"])
 
         gb_work["issue_year"] = pd.to_numeric(gb_work["issue_year"], errors="coerce")
-        gb_keys = ["ric", "issue_year"]
+        gb_keys = ["org_permid", "issue_year"]
 
         sum_cols = [
             "Proceeds Amount This Market",
@@ -1397,7 +1405,7 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
                 gb_agg["self_labeled_share"] = 1 - gb_agg["share_certified_proceeds"]
                 gb_agg["is_certified_majority"] = (gb_agg["share_certified_proceeds"] >= 0.5).astype(int)
             gb_agg = gb_agg.rename(columns={"issue_year": "Year"})
-            panel = panel.merge(gb_agg, on=["ric", "Year"], how="left")
+            panel = panel.merge(gb_agg, on=["org_permid", "Year"], how="left")
 
     # ------------------------------------------------------------------
     # Merge CBI (country-year aggregates)
@@ -1417,9 +1425,13 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
         cbi_agg = cbi_agg.rename(columns={"Issuer Country": "country", "issue_year": "Year"})
         panel = panel.merge(cbi_agg, on=["country", "Year"], how="left")
 
+    # Ensure panel has org_permid
+    if "org_permid" in panel.columns:
+        panel = panel.dropna(subset=["org_permid"])
+
     # Resolve duplicate firm-year observations (safety net)
-    if panel.duplicated(subset=["ric", "Year"]).any():
-        group_cols = ["ric", "Year"]
+    if panel.duplicated(subset=["org_permid", "Year"]).any():
+        group_cols = ["org_permid", "Year"]
         num_cols = [c for c in panel.select_dtypes(include=[np.number]).columns if c not in group_cols]
         cat_cols = [c for c in panel.columns if c not in group_cols + num_cols]
         agg_num = panel.groupby(group_cols, as_index=False)[num_cols].mean() if num_cols else pd.DataFrame()
@@ -1429,8 +1441,8 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
         else:
             panel = agg_num if not agg_num.empty else agg_cat
 
-    # Drop merge artifacts
-    drop_cols = [c for c in ["ric_count_x", "ric_count_y", "org_permid"] if c in panel.columns]
+    # Drop merge artifacts (keep org_permid!)
+    drop_cols = [c for c in ["ric_count_x", "ric_count_y"] if c in panel.columns]
     if drop_cols:
         panel = panel.drop(columns=drop_cols)
 
@@ -1558,7 +1570,7 @@ def prepare_full_panel_data(
     # Handle missing values
     panel = handle_missing_values(
         panel,
-        firm_col="ric",
+        firm_col="org_permid",
         forward_fill_cols=[
             "total_assets", "total_debt", "long_term_debt",
             "market_capitalization", "employees"
@@ -1577,21 +1589,32 @@ def prepare_full_panel_data(
     # Normalize percentages (ROA, ROE, ESG score)
     panel = normalize_percentages(panel)
 
-    # Feature engineering
+    # Pass 1: Winsorize raw financial metrics BEFORE ratio computation
+    raw_winsor_cols = [
+        "capital_expenditures", "cash", "current_assets_total",
+        "current_liabilities_total", "earnings_bef_interest_tax",
+        "long_term_debt", "market_capitalization", "net_cash_flow_operating_actv",
+        "net_sales_or_revenues", "operating_income", "total_assets",
+        "total_capital", "total_debt", "total_liabilities", "employees",
+        "return_on_assets", "return_on_equity_total", "esg_score",
+    ]
+    panel = winsorize_outliers(panel, include_cols=raw_winsor_cols)
+
+    # Feature engineering (now operates on cleaned inputs)
     panel = create_financial_ratios(panel)
     panel = create_log_features(panel, cols_to_log=["total_assets", "employees", "net_sales_or_revenues"])
 
-    # Winsorize core continuous variables (1st/99th percentile)
-    winsor_cols = [
-        "return_on_assets", "Tobin_Q", "Leverage",
-        "Asset_Turnover", "Cash_Ratio", "Capital_Intensity",
+    # Pass 2: Winsorize computed ratios for residual outliers
+    ratio_winsor_cols = [
+        "Leverage", "Asset_Turnover", "Cash_Ratio",
+        "Capital_Intensity", "Tobin_Q",
     ]
-    panel = winsorize_outliers(panel, include_cols=winsor_cols)
+    panel = winsorize_outliers(panel, include_cols=ratio_winsor_cols)
 
     # Lagged controls/outcomes
     panel = create_lagged_features(
         panel,
-        firm_col="ric",
+        firm_col="org_permid",
         vars_to_lag=[
             "Firm_Size", "Leverage", "Asset_Turnover", "Cash_Ratio",
             "Capital_Intensity", "return_on_assets", "Tobin_Q", "esg_score",
@@ -1649,7 +1672,7 @@ def prepare_full_panel_data(
         analysis_panel = prepare_analysis_sample(
             panel,
             survivorship_mode=survivorship_mode,
-            firm_col="ric",
+            firm_col="org_permid",
             time_col="Year",
             recent_years=recent_years,
             **survivorship_kwargs,

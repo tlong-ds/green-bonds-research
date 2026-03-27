@@ -505,13 +505,13 @@ def create_matched_dataset(
         max_abs_std_diff = float(PSM_QUALITY_CONFIG.get('max_abs_std_diff', 0.1))
     
     # Create year-level treatment indicator
-    df['ever_treated'] = df.groupby('ric')[treatment_col].transform('max')
+    df['ever_treated'] = df.groupby('org_permid')[treatment_col].transform('max')
     treatment_years = (
         df[df[treatment_col] == 1]
-        .groupby('ric')['Year']
+        .groupby('org_permid')['Year']
         .min()
     )
-    df['treatment_year'] = df['ric'].map(treatment_years)
+    df['treatment_year'] = df['org_permid'].map(treatment_years)
     
     diagnostics = {}
     

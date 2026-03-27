@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 
 def validate_panel_structure(
     df: pd.DataFrame,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
 ) -> Dict[str, Any]:
     """
@@ -26,7 +26,7 @@ def validate_panel_structure(
     df : pd.DataFrame
         Panel data.
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
         
@@ -134,7 +134,7 @@ def detect_outliers(
 def validate_treatment_variation(
     df: pd.DataFrame,
     treatment_col: str = 'green_bond_issue',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
 ) -> Dict[str, Any]:
     """
@@ -147,7 +147,7 @@ def validate_treatment_variation(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_issue').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
         
@@ -183,7 +183,7 @@ def check_parallel_trends_assumption(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     pre_treatment_periods: int = 3,
 ) -> Dict[str, Any]:
@@ -199,7 +199,7 @@ def check_parallel_trends_assumption(
     treatment_col : str, optional
         Treatment column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     pre_treatment_periods : int, optional
@@ -375,7 +375,7 @@ def check_panel_columns(df: pd.DataFrame, requested_outcomes: Optional[List[str]
             report['outcomes'][outcome] = {'found': False, 'similar': similar}
             
     # Check required vars
-    required = ['ric', 'Year', 'green_bond_active', 'L1_Firm_Size', 'L1_Leverage']
+    required = ['org_permid', 'Year', 'green_bond_active', 'L1_Firm_Size', 'L1_Leverage']
     for var in required:
         report['required_vars'][var] = {
             'found': var in df.columns,
@@ -394,7 +394,7 @@ def check_panel_columns(df: pd.DataFrame, requested_outcomes: Optional[List[str]
 
 def generate_data_quality_report(
     df: pd.DataFrame,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     treatment_col: str = 'green_bond_issue',
 ) -> str:
@@ -406,7 +406,7 @@ def generate_data_quality_report(
     df : pd.DataFrame
         Input data.
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     treatment_col : str, optional

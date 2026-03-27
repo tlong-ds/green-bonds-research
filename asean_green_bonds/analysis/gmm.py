@@ -39,7 +39,7 @@ def _collapse_instrument_list(instruments: List[str]) -> List[str]:
 def select_gmm_instruments(
     df: pd.DataFrame,
     outcome: str,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     max_lags: int = 3,
     min_obs_fraction: float = 0.3,
@@ -57,7 +57,7 @@ def select_gmm_instruments(
     outcome : str
         Outcome variable name to create lags for.
     entity_col : str, optional
-        Entity identifier column (default: 'ric').
+        Entity identifier column (default: 'org_permid').
     time_col : str, optional
         Time period column (default: 'Year').
     max_lags : int, optional
@@ -100,7 +100,7 @@ def select_gmm_instruments(
 def _select_lagged_instruments_for_variable(
     df: pd.DataFrame,
     variable: str,
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     max_lags: int = 3,
     min_obs_fraction: float = 0.3,
@@ -378,7 +378,7 @@ def estimate_system_gmm(
     df: pd.DataFrame,
     outcome: str,
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     instruments: Optional[List[str]] = None,
@@ -405,7 +405,7 @@ def estimate_system_gmm(
     treatment_col : str, optional
         Treatment indicator column (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier column (default: 'ric').
+        Entity identifier column (default: 'org_permid').
     time_col : str, optional
         Time period column (default: 'Year').
     control_vars : list, optional
@@ -725,7 +725,7 @@ def run_gmm_robustness(
     df: pd.DataFrame,
     outcomes: List[str],
     treatment_col: str = 'green_bond_active',
-    entity_col: str = 'ric',
+    entity_col: str = 'org_permid',
     time_col: str = 'Year',
     control_vars: Optional[List[str]] = None,
     max_lags: int = 2,
@@ -747,7 +747,7 @@ def run_gmm_robustness(
     treatment_col : str, optional
         Treatment indicator (default: 'green_bond_active').
     entity_col : str, optional
-        Entity identifier (default: 'ric').
+        Entity identifier (default: 'org_permid').
     time_col : str, optional
         Time identifier (default: 'Year').
     control_vars : list, optional
