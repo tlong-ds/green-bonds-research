@@ -275,7 +275,7 @@ def heterogeneous_effects_analysis(
     treatment_col: str = 'green_bond_active',
     entity_col: str = 'ric',
     time_col: str = 'Year',
-    heterogeneity_var: str = 'is_certified',
+    heterogeneity_var: str = 'is_certified_majority',
     n_bins: int = 0,
 ) -> Dict[str, Any]:
     """
@@ -294,7 +294,7 @@ def heterogeneous_effects_analysis(
     time_col : str, optional
         Time identifier (default: 'Year').
     heterogeneity_var : str, optional
-        Variable defining subgroups (default: 'is_certified').
+        Variable defining subgroups (default: 'is_certified_majority').
     n_bins : int, optional
         If heterogeneity_var is continuous and n_bins > 1, split into quantile
         bins and estimate effects by bin (default: 0, disabled).

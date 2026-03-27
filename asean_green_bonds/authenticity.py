@@ -6,6 +6,7 @@ for green bonds, including CBI (Climate Bonds Initiative) and ICMA
 (International Capital Market Association) Green Bond Principles certification.
 """
 
+import os
 import pandas as pd
 import numpy as np
 import re
@@ -60,6 +61,138 @@ def extract_cbi_certification(df: pd.DataFrame, column: str = "Primary Use Of Pr
     )
     
     return df_copy
+
+
+def merge_cbi_certification(
+    df_gb: pd.DataFrame,
+    cbi_df: Optional[pd.DataFrame] = None,
+    cbi_path: str = "data/cbi_certified_bonds.csv",
+    issuer_col_gb: str = "Issuer/Borrower Name Full",
+    date_col_gb: str = "Dates: Issue Date",
+    country_col_gb: str = "Issuer/Borrower Nation",
+    issuer_col_cbi: str = "Issuer / Applicant",
+    date_col_cbi: str = "Issue date",
+    country_col_cbi: str = "Issuer Country",
+    match_rule: str = "issuer_date_country",
+    asean_only: bool = False,
+    allow_fuzzy: bool = False,
+    fuzzy_threshold: int = 90,
+    issuer_aliases: Optional[Dict[str, str]] = None,
+    use_proxy_if_missing: bool = True,
+) -> pd.DataFrame:
+    """
+    Merge CBI-certified bonds into green bonds data and set is_cbi_certified.
+
+    Matching keys (match_rule):
+    - "issuer_date_country": normalized issuer + exact issue date + country
+    - "issuer_year_country": normalized issuer + issue year + country
+
+    If CBI data is missing and use_proxy_if_missing is True, falls back to
+    extract_cbi_certification (proxy based on Primary Use Of Proceeds).
+    """
+    df_work = df_gb.copy()
+
+    # Load CBI data if not provided
+    if cbi_df is None:
+        if os.path.exists(cbi_path):
+            cbi_df = pd.read_csv(cbi_path)
+        else:
+            cbi_df = pd.DataFrame()
+
+    if cbi_df is None or cbi_df.empty:
+        if use_proxy_if_missing:
+            return extract_cbi_certification(df_work)
+        df_work["is_cbi_certified"] = 0
+        return df_work
+
+    # Normalize key fields in GB
+    if issuer_col_gb not in df_work.columns or date_col_gb not in df_work.columns or country_col_gb not in df_work.columns:
+        df_work["is_cbi_certified"] = 0
+        return df_work
+    df_work["_issuer_norm"] = df_work[issuer_col_gb].apply(normalize_company_name)
+    gb_dates = pd.to_datetime(df_work[date_col_gb], errors="coerce")
+    df_work["_issue_date"] = gb_dates.dt.date
+    df_work["_issue_year"] = gb_dates.dt.year
+    df_work["_country_norm"] = df_work[country_col_gb].astype(str).str.strip().str.upper()
+
+    # Normalize key fields in CBI
+    if issuer_col_cbi not in cbi_df.columns or date_col_cbi not in cbi_df.columns or country_col_cbi not in cbi_df.columns:
+        df_work["is_cbi_certified"] = 0
+        return df_work
+
+    cbi_work = cbi_df.copy()
+    cbi_work["_issuer_norm"] = cbi_work[issuer_col_cbi].apply(normalize_company_name)
+    cbi_dates = pd.to_datetime(cbi_work[date_col_cbi], errors="coerce")
+    cbi_work["_issue_date"] = cbi_dates.dt.date
+    cbi_work["_issue_year"] = cbi_dates.dt.year
+    cbi_work["_country_norm"] = cbi_work[country_col_cbi].astype(str).str.strip().str.upper()
+
+    # Optional issuer alias mapping (CBI -> GB normalized names)
+    if issuer_aliases is None:
+        issuer_aliases = {
+            "ENERGY ABSOLUTE PUBLIC": "ENERGY ABSOLUTE",
+            "BCPG PUBLIC": "BCPG",
+            "SPCG PUBLIC": "SPCG",
+            "PTT PUBLIC": "PTT",
+            "B GRIMM POWER DAU TIENG TAY NINH ENERGY JOINT STOCK": "B GRIMM POWER",
+        }
+    if issuer_aliases:
+        cbi_work["_issuer_norm"] = cbi_work["_issuer_norm"].replace(issuer_aliases)
+
+    # Optional ASEAN filter
+    if asean_only:
+        asean_countries = {
+            "BRUNEI", "CAMBODIA", "INDONESIA", "LAOS", "MALAYSIA",
+            "MYANMAR", "PHILIPPINES", "SINGAPORE", "THAILAND", "VIETNAM",
+        }
+        cbi_work = cbi_work[cbi_work["_country_norm"].isin(asean_countries)]
+
+    # Build match keys
+    if match_rule == "issuer_year_country":
+        gb_keys = ["_issuer_norm", "_issue_year", "_country_norm"]
+        cbi_keys = ["_issuer_norm", "_issue_year", "_country_norm"]
+    else:
+        gb_keys = ["_issuer_norm", "_issue_date", "_country_norm"]
+        cbi_keys = ["_issuer_norm", "_issue_date", "_country_norm"]
+
+    gb_key_df = df_work[gb_keys].copy()
+    cbi_key_df = cbi_work[cbi_keys].dropna().drop_duplicates()
+    cbi_key_df["_cbi_match"] = 1
+
+    matched = gb_key_df.merge(cbi_key_df, on=gb_keys, how="left")
+    df_work["is_cbi_certified"] = matched["_cbi_match"].fillna(0).astype(int)
+
+    # Fuzzy issuer match (issuer_year_country only)
+    if allow_fuzzy and match_rule == "issuer_year_country":
+        from difflib import SequenceMatcher
+
+        cbi_by_year_country = {}
+        for _, row in cbi_key_df.iterrows():
+            key = (row["_issue_year"], row["_country_norm"])
+            cbi_by_year_country.setdefault(key, set()).add(row["_issuer_norm"])
+
+        for idx, row in df_work[df_work["is_cbi_certified"] == 0].iterrows():
+            year = row.get("_issue_year")
+            country = row.get("_country_norm")
+            issuer = row.get("_issuer_norm")
+            if pd.isna(year) or pd.isna(country) or not issuer:
+                continue
+            candidates = cbi_by_year_country.get((year, country), set())
+            if not candidates:
+                continue
+            best_score = 0
+            for cand in candidates:
+                score = int(SequenceMatcher(None, issuer, cand).ratio() * 100)
+                if score > best_score:
+                    best_score = score
+                if best_score >= fuzzy_threshold:
+                    break
+            if best_score >= fuzzy_threshold:
+                df_work.at[idx, "is_cbi_certified"] = 1
+
+    # Cleanup
+    df_work = df_work.drop(columns=["_issuer_norm", "_issue_date", "_issue_year", "_country_norm"])
+    return df_work
 
 
 def compute_cbi_stats(df: pd.DataFrame, cbi_column: str = "is_cbi_certified") -> dict:
@@ -735,7 +868,8 @@ def print_authenticity_report(report: dict) -> None:
 def apply_authenticity_proxy(
     panel_data_path: str,
     green_bonds_path: str,
-    output_path: Optional[str] = None
+    output_path: Optional[str] = None,
+    cbi_path: str = "data/cbi_certified_bonds.csv",
 ) -> pd.DataFrame:
     """
     Perform tiered authenticity calculation and return result.
@@ -757,8 +891,16 @@ def apply_authenticity_proxy(
     df_esg = pd.read_csv(panel_data_path)
     df_gb = pd.read_csv(green_bonds_path)
     
-    # Extract certifications
-    df_gb = extract_cbi_certification(df_gb)
+    # Extract certifications (CBI from dataset, ICMA via heuristic)
+    df_gb = merge_cbi_certification(
+        df_gb,
+        cbi_path=cbi_path,
+        match_rule="issuer_year_country",
+        asean_only=True,
+        allow_fuzzy=True,
+        fuzzy_threshold=90,
+        use_proxy_if_missing=True,
+    )
     df_gb = extract_icma_certification(df_gb)
     
     # Tiered authenticity
@@ -775,7 +917,8 @@ def apply_authenticity_with_fallbacks(
     green_bonds_path: str,
     esg_panel_path: Optional[str] = None,
     fallback: str = 'tiered',
-    output_path: str = 'data/green_bonds_authentic_tiered.csv'
+    output_path: str = 'data/green_bonds_authentic_tiered.csv',
+    cbi_path: str = "data/cbi_certified_bonds.csv",
 ) -> pd.DataFrame:
     """
     Apply authenticity scoring with configurable fallback behaviors.
@@ -804,8 +947,16 @@ def apply_authenticity_with_fallbacks(
     df_esg = pd.read_csv(esg_panel_path)
     df_gb = pd.read_csv(green_bonds_path)
     
-    # Extract certifications
-    df_gb = extract_cbi_certification(df_gb)
+    # Extract certifications (CBI from dataset, ICMA via heuristic)
+    df_gb = merge_cbi_certification(
+        df_gb,
+        cbi_path=cbi_path,
+        match_rule="issuer_year_country",
+        asean_only=True,
+        allow_fuzzy=True,
+        fuzzy_threshold=90,
+        use_proxy_if_missing=True,
+    )
     df_gb = extract_icma_certification(df_gb)
     
     if fallback == 'certification_only':
@@ -861,4 +1012,3 @@ def extract_issuer_verification_fields(df: pd.DataFrame) -> pd.DataFrame:
     result['issuer_track_record'] = compute_issuer_track_record(df)
     result['has_green_framework'] = df['Primary Use Of Proceeds'].apply(has_green_framework)
     return result
-

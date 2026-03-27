@@ -20,9 +20,12 @@ from .processing import (
     encode_categorical_features,
     create_financial_ratios,
     create_lagged_features,
+    scale_numeric_features,
     filter_survived_firms,
     calculate_survivorship_weights,
     prepare_analysis_sample,
+    build_full_panel_data,
+    prepare_full_panel_data,
 )
 
 from .feature_engineering import (
@@ -60,9 +63,12 @@ __all__ = [
     "encode_categorical_features",
     "create_financial_ratios",
     "create_lagged_features",
+    "scale_numeric_features",
     "filter_survived_firms",
     "calculate_survivorship_weights",
     "prepare_analysis_sample",
+    "build_full_panel_data",
+    "prepare_full_panel_data",
     # Feature Engineering
     "engineer_psm_attributes",
     "merge_psm_into_panel",

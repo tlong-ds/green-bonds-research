@@ -69,6 +69,11 @@ ESG_ATTRIBUTE_COLUMNS = {
     "Board Size": "board_size",
     "Board Independence": "board_independence",
     "CEO–Chairman Separation": "ceo_separation", 
+    "Board Independence Flag": "board_independence",
+    "Independence": "board_independence",
+    "CEO–Chairman Separation Flag": "ceo_separation",
+    "CEO-Chairman Separation Flag": "ceo_separation",
+    "Value - Board Structure/CEO-Chairman Separation": "ceo_separation",
 }
 
 # Series / Static Attributes
@@ -318,6 +323,7 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
         pd.DataFrame(static_data).to_csv(static_path, index=False, mode='a', header=header)
 
     # 4. Extract ESG Data (Time Series Layout)
+    esg_frames = []
     for sheet_name, country in zip(ESG_SHEET_NAME, COUNTRIES):
         df = load_refinitiv_sheet(file_path, sheet_name)
 
@@ -339,7 +345,9 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
         attr_map = df.groupby(attr_code)['Name'].apply(
             lambda g: longest_common_suffix(g.tolist())
         )
-        df['attribute'] = attr_code.map(attr_map)
+        # Prefer code-based mapping when available (governance codes)
+        attr_from_code = attr_code.map(WORLDSCOPE_TO_ATTRIBUTE)
+        df['attribute'] = attr_from_code.fillna(attr_code.map(attr_map))
         df['ticker'] = df['Code'].str.extract(r'^(.+?)\(')[0]
         df['company'] = df.apply(
             lambda row: row['Name'][:-(len(row['attribute']) + 3)] if pd.notna(row['attribute']) else row['Name'],
@@ -364,9 +372,13 @@ def prepare_refinitiv_data(file_path: str, output_dir: str = "data"):
             aggfunc='first'
         ).reset_index()
 
+        esg_frames.append(df_wide)
+
+    # Write ESG data once to preserve all columns across sheets
+    if esg_frames:
+        esg_all = pd.concat(esg_frames, ignore_index=True, sort=False)
         esg_path = os.path.join(output_dir, "esg_data.csv")
-        header = not os.path.exists(esg_path)
-        df_wide.to_csv(esg_path, index=False, mode='a', header=header)
+        esg_all.to_csv(esg_path, index=False)
 
 
 def main():

@@ -258,8 +258,14 @@ def merge_psm_into_panel(
         print("MERGING PSM ATTRIBUTES INTO FINAL PANEL")
         print("="*70)
     
+    def _first_non_null(series: pd.Series):
+        non_null = series.dropna()
+        if len(non_null) == 0:
+            return np.nan
+        return non_null.iloc[0]
+
     df = panel_df.copy()
-    
+
     # Step 1: Add org_permid from market_df if not present
     if 'org_permid' not in df.columns:
         market_org_permid = market_df[['ric', 'org_permid']].drop_duplicates()
@@ -270,75 +276,95 @@ def merge_psm_into_panel(
         df['org_permid'] = pd.to_numeric(df['org_permid'], errors='coerce')
         if verbose:
             print(f"\nStep 1: org_permid already present: {df['org_permid'].notna().sum()}/{len(df)}")
-    
-    # Step 2: Prepare PSM data aggregated by issuer
+
+    # Step 2: Prepare issuer-year PSM signals (avoid post-treatment leakage)
     if verbose:
-        print("\nStep 2: Aggregating PSM attributes by issuer...")
-    
+        print("\nStep 2: Building issuer-year PSM attributes (time-varying)...")
+
     gb_prepared = gb_engineered_df.copy()
-    gb_prepared['Dates: Issue Date'] = pd.to_datetime(gb_prepared['Dates: Issue Date'], errors='coerce')
-    
-    # Aggregate at issuer level (use most recent for issuers with multiple bonds)
-    gb_psm_by_issuer = gb_prepared.sort_values('Dates: Issue Date', na_position='last').groupby(
-        'Issuer/Borrower PermID'
-    ).last()[[
-        'has_green_framework',
-        'asset_tangibility',
-        'issuer_track_record',
-        'prior_green_bonds'
-    ]].reset_index()
-    
-    gb_psm_by_issuer = gb_psm_by_issuer.rename(columns={'Issuer/Borrower PermID': 'org_permid'})
-    gb_psm_by_issuer['org_permid'] = pd.to_numeric(gb_psm_by_issuer['org_permid'], errors='coerce')
+    gb_prepared['issue_year'] = pd.to_datetime(gb_prepared.get('Dates: Issue Date'), errors='coerce').dt.year
+    gb_prepared['org_permid'] = pd.to_numeric(gb_prepared.get('Issuer/Borrower PermID'), errors='coerce')
+    for col in ['has_green_framework', 'issuer_track_record', 'asset_tangibility']:
+        if col not in gb_prepared.columns:
+            gb_prepared[col] = np.nan
+        gb_prepared[col] = pd.to_numeric(gb_prepared[col], errors='coerce')
+    gb_prepared = gb_prepared.dropna(subset=['org_permid', 'issue_year'])
+    gb_prepared['issue_year'] = gb_prepared['issue_year'].astype(int)
+
+    if gb_prepared.empty:
+        if verbose:
+            print("  ⚠ No valid issue-year data found; using defaults only.")
+        df['has_green_framework'] = 0
+        df['asset_tangibility'] = DEFAULT_TANGIBILITY
+        df['issuer_track_record'] = 0
+        df['prior_green_bonds'] = 0
+        return df
+
+    # Issue counts by issuer-year
+    issue_counts = gb_prepared.groupby(['org_permid', 'issue_year']).size().reset_index(name='issue_count')
+
+    # Year-specific flags (max within year)
+    year_flags = gb_prepared.groupby(['org_permid', 'issue_year']).agg(
+        has_green_framework=('has_green_framework', 'max'),
+        issuer_track_record=('issuer_track_record', 'max'),
+    ).reset_index()
+
+    issuer_year = issue_counts.merge(year_flags, on=['org_permid', 'issue_year'], how='left')
+    issuer_year = issuer_year.sort_values(['org_permid', 'issue_year'])
+    issuer_year['cumulative_issues'] = issuer_year.groupby('org_permid')['issue_count'].cumsum()
+    issuer_year['prior_green_bonds'] = issuer_year.groupby('org_permid')['cumulative_issues'].shift(1).fillna(0)
+    issuer_year['has_green_framework'] = issuer_year.groupby('org_permid')['has_green_framework'].cummax()
+    issuer_year['issuer_track_record'] = issuer_year.groupby('org_permid')['issuer_track_record'].cummax()
+
+    # Asset tangibility (issuer-level static proxy)
+    asset_map = (
+        gb_prepared.groupby('org_permid')['asset_tangibility']
+        .agg(_first_non_null)
+        .reset_index()
+    )
+
+    if verbose:
+        print(f"  ✓ Issuer-year rows: {len(issuer_year)}")
+        print(f"  ✓ Issuers with asset tangibility: {asset_map['asset_tangibility'].notna().sum()}")
+
+    # Step 3: Merge issuer-year signals into panel (as-of by year)
     df['org_permid'] = pd.to_numeric(df['org_permid'], errors='coerce')
-    
-    if verbose:
-        print(f"  ✓ Aggregated PSM for {len(gb_psm_by_issuer)} unique issuers")
-    
-    # Step 3: Initialize PSM columns with defaults
-    if verbose:
-        print("\nStep 3: Initializing PSM attributes with defaults...")
-    
-    df['has_green_framework'] = 0
-    df['asset_tangibility'] = 0.55
-    df['issuer_track_record'] = 0
-    df['prior_green_bonds'] = 0
-    
-    # Step 4: Merge PSM features
-    if verbose:
-        print("\nStep 4: Merging PSM features from green bond issuers...")
-    
-    if len(gb_psm_by_issuer) > 0:
-        df = df.merge(
-            gb_psm_by_issuer,
-            on='org_permid',
-            how='left',
-            suffixes=('_default', '_issuer')
-        )
-        
-        # Use issuer-specific values where available
-        for col in ['has_green_framework', 'asset_tangibility', 'issuer_track_record', 'prior_green_bonds']:
-            issuer_col = f'{col}_issuer'
-            default_col = f'{col}_default'
-            
-            if issuer_col in df.columns:
-                df[col] = df[issuer_col].fillna(df[default_col])
-                df = df.drop(columns=[issuer_col, default_col], errors='ignore')
-            elif default_col in df.columns:
-                df = df.rename(columns={default_col: col})
-    
+    df = df.merge(
+        issuer_year,
+        left_on=['org_permid', 'Year'],
+        right_on=['org_permid', 'issue_year'],
+        how='left'
+    )
+    df = df.drop(columns=['issue_year', 'issue_count', 'cumulative_issues'], errors='ignore')
+
+    df = df.sort_values(['org_permid', 'Year'])
+    for col in ['has_green_framework', 'issuer_track_record', 'prior_green_bonds']:
+        if col in df.columns:
+            df[col] = df.groupby('org_permid')[col].ffill()
+
+    # Step 4: Merge asset tangibility (issuer-level)
+    if 'asset_tangibility' in df.columns:
+        df = df.merge(asset_map, on='org_permid', how='left', suffixes=('', '_issuer'))
+        df['asset_tangibility'] = df['asset_tangibility'].fillna(df['asset_tangibility_issuer'])
+        df = df.drop(columns=['asset_tangibility_issuer'], errors='ignore')
+    else:
+        df = df.merge(asset_map, on='org_permid', how='left')
+
+    # Step 5: Fill defaults for controls and pre-issuance years
+    df['has_green_framework'] = df['has_green_framework'].fillna(0).astype(int)
+    df['issuer_track_record'] = df['issuer_track_record'].fillna(0).astype(int)
+    df['prior_green_bonds'] = df['prior_green_bonds'].fillna(0).astype(int)
+    df['asset_tangibility'] = df['asset_tangibility'].fillna(DEFAULT_TANGIBILITY)
+
     if verbose:
         print(f"  ✓ Merged into panel: {df.shape}")
-    
-    # Step 5: Verification
-    if verbose:
         print("\nStep 5: Verification")
         psm_cols = ['has_green_framework', 'asset_tangibility', 'issuer_track_record', 'prior_green_bonds']
         for col in psm_cols:
             if col in df.columns:
                 non_null = df[col].notna().sum()
                 print(f"  ✓ {col:35s} - {non_null}/{len(df)} non-null")
-    
+
     return df
 
 
