@@ -50,6 +50,12 @@ from .gmm import (
     run_gmm_robustness,
 )
 
+from .event_study_cohort import (
+    cohort_specific_did,
+    aggregate_cohort_att,
+    identify_cohorts,
+)
+
 __all__ = [
     # Propensity Score
     "estimate_propensity_scores",

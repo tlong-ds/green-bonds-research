@@ -50,6 +50,8 @@ OUTCOME_VARIABLES = [
     "return_on_assets",
     "Tobin_Q",
     "esg_score",
+    "ln_emissions_intensity",  # Log-transformed environmental KPI (81% coverage)
+    "implied_cost_of_debt",  # Greenium proxy: interest_expense / total_debt (10% coverage)
 ]
 
 CONTROL_VARIABLES = [

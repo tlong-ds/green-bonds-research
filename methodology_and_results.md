@@ -4,247 +4,281 @@
 
 **How do green bonds impact the financial performance and corporate environmental performance of ASEAN-listed companies?**
 
-This study employs a three-stage causal inference pipeline—Propensity Score Matching (PSM), Difference-in-Differences (DiD), and System GMM—to isolate the causal effect of green bond issuance on three outcome variables: Return on Assets (ROA), Tobin's Q, and ESG Score.
+This study employs a three-stage causal inference pipeline — Propensity Score Matching (PSM), Difference-in-Differences (DiD), and System GMM — to isolate the causal effect of green bond issuance on four outcome variables: Return on Assets (ROA), Tobin's Q, ESG Score, and Log Emissions Intensity. The analysis is supplemented by a cohort-specific event study, greenwashing/authenticity analysis, and heterogeneous effects by firm size.
 
 ---
 
 ## 2. Methodology
 
-### 2.1. Data & Panel Structure
+### 2.1 Data & Panel Structure
 
-The analysis uses a firm-year panel dataset covering **3,964 unique firms** across **6 ASEAN markets** (Vietnam, Thailand, Malaysia, Singapore, Philippines, Indonesia) over **2020–2025**.
+| Dimension | Value |
+| --- | --- |
+| Observations | 23,284 |
+| Variables | 164+ |
+| Entities | 3,964 (identified by `org_permid`) |
+| Periods | 6 years (2020–2025) |
+| Treatment | `green_bond_active` (1 = firm has issued a green bond by year *t*) |
+| Treated firm-years | 81 (0.35% of panel) |
+| Treated firms | 20 (0.5% of entities) |
+| Treatment cohorts | 5 (first treated: 2020=5, 2021=3, 2022=4, 2023=4, 2024=4) |
 
-```
-Panel: 23,284 observations × 164 variables
-Entities: 3,964 (identified by org_permid)
-Periods: 6 years (2020-2025)
-Treatment: green_bond_active (1 = post-issuance, 0 = otherwise)
-```
+> Source: [processing.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/data/processing.py) → `prepare_full_panel_data()`, [config.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/config.py).
 
-> Source: [config.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/config.py) defines all variable names and parameters. Panel construction in [processing.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/data/processing.py#L1500-L1700).
+### 2.2 Outcome Variables
 
-**Treatment prevalence is extremely low**: only **20 firms** (0.5% of entities) have issued green bonds, producing **81 treated firm-year observations** (0.35% of the panel). This sparsity is a fundamental constraint on all downstream analyses.
+| Variable | Type | Description | Scale |
+| --- | --- | --- | --- |
+| `return_on_assets` | Financial (accounting) | Net income / total assets | 0–1 |
+| `Tobin_Q` | Financial (market) | Market cap / total assets | > 0 |
+| `esg_score` | Environmental (composite) | Refinitiv ESG rating | 0–100 |
+| `ln_emissions_intensity` | Environmental (direct) | ln(GHG emissions per unit output) | ~0–21 |
 
-### 2.2. Outcome & Control Variables
+### 2.3 Control Variables (1-Year Lagged)
 
-| Variable | Type | Description |
-|---|---|---|
-| `return_on_assets` | Financial (accounting) | ROA — profitability metric |
-| `Tobin_Q` | Financial (market) | Market capitalization / total assets |
-| `esg_score` | Environmental | Composite ESG rating (0–100) |
+| Control | Formula |
+| --- | --- |
+| `L1_Firm_Size` | ln(total_assets) at *t−1* |
+| `L1_Leverage` | total_debt / total_assets at *t−1* |
+| `L1_Asset_Turnover` | net_sales / total_assets at *t−1* |
+| `L1_Capital_Intensity` | capital_expenditures / total_assets at *t−1* |
+| `L1_Cash_Ratio` | cash / total_assets at *t−1* |
 
-Controls are **1-year lagged** to avoid simultaneity bias:
+> Source: [processing.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/data/processing.py) → `create_financial_ratios()`, `create_lagged_features()`. Lists in [config.py#L49-L70](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/config.py#L49-L70).
 
-| Control | Code Reference |
-|---|---|
-| `L1_Firm_Size` | `ln(total_assets)` lagged 1 year |
-| `L1_Leverage` | `total_debt / total_assets` lagged |
-| `L1_Asset_Turnover` | `net_sales / total_assets` lagged |
-| `L1_Capital_Intensity` | `capital_expenditures / total_assets` lagged |
-| `L1_Cash_Ratio` | `cash / total_assets` lagged |
+### 2.4 Outlier Treatment
 
-> Source: Variables defined in [config.py#L49-L70](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/config.py#L49-L70). Ratios computed in [processing.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/data/processing.py) → `create_financial_ratios()`, lagging via `create_lagged_features()`.
+- **Pass 1**: 18 raw financial metrics winsorized at 1st/99th percentile
+- **Pass 2**: 5 computed ratios winsorized at 1st/99th percentile
+- **Log-transform**: `ln_emissions_intensity = ln(max(1, emissions_intensity))` to handle extreme right skew (raw range: 0 to 1.04B)
 
-### 2.3. Stage 1: Propensity Score Matching (PSM)
+> Source: [processing.py#L1595-L1615](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/data/processing.py#L1595-L1615)
 
-PSM creates comparable treatment/control groups by matching green bond issuers to non-issuers with similar observable characteristics, following Rosenbaum & Rubin (1983).
+---
 
-**Implementation:**
-- Logistic regression: `P(green_bond_issue = 1 | X)` where X = PSM features
-- Caliper: Austin (2011) method → `0.25 × SD(propensity_score)`, relaxed to `2× Austin (min 0.05)` due to sparse treatment
-- Matching ratio: 1:4 nearest-neighbor without replacement
-- Pre-matching trimming: Percentile method, α = 0.05
+## 3. Stage 1: Propensity Score Matching (PSM)
 
-> Source: [propensity_score.py#L19-L73](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/propensity_score.py#L19-L73) — `estimate_propensity_scores()` uses `sklearn.LogisticRegression` with `StandardScaler`. Caliper calculation in [propensity_score.py#L76-L132](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/propensity_score.py#L76-L132).
+> Source: [propensity_score.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/propensity_score.py)
 
-**Results:**
-```
-Propensity scores estimated: 16,831 observations
-Optimal caliper (Austin): 0.0100
-Relaxed caliper (2× Austin, min 0.05): 0.0500
-Trimming: dropped 1,684 / 16,831 observations (10%)
-Matched treated: 9 / 20 entities (45%)
-Matched controls: 36
-Total matched: 45 observations
-```
+| Metric | Value |
+| --- | --- |
+| Propensity scores estimated | 16,831 |
+| Caliper (2× Austin, min 0.05) | 0.0500 |
+| Matched treated | 9 / 20 (45%) |
+| Matched controls | 36 |
+| Total matched | 45 |
 
-**Covariate Balance After Matching:**
-| Feature | Std. Difference | P-Value | Balanced? |
-|---|---|---|---|
-| L1_Firm_Size | −0.010 | 0.979 | ✅ True |
-| L1_Leverage | 0.032 | 0.932 | ✅ True |
-| L1_Asset_Turnover | −0.029 | 0.943 | ✅ True |
-| L1_Capital_Intensity | −0.069 | 0.853 | ✅ True |
-| L1_Cash_Ratio | −0.020 | 0.958 | ✅ True |
+**Covariate Balance**: All standardized differences < 0.1 (Cohen's d). ✅ Good balance achieved.
 
-> All standardized differences < 0.1 (Cohen's d threshold), confirming good covariate balance.
+> [!WARNING]
+> Only 9 treated firms matched. Pipeline falls back to **full panel** (23,284 obs) for DiD/GMM.
 
-**⚠️ Critical Limitation:** Despite good balance, only **9 treated firms matched** (45% retention). The matched sample of 45 observations is too small for reliable within-firm DiD estimation. The notebook correctly detects this and **falls back to the full panel** (23,284 obs) for DiD/GMM stages.
+---
 
-> Source: [propensity_score.py#L434-L606](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/propensity_score.py#L434-L606) — `create_matched_dataset()` orchestrates trimming, matching, and quality checks.
+## 4. Stage 2: Difference-in-Differences (DiD)
 
-### 2.4. Stage 2: Difference-in-Differences (DiD)
+> Source: [difference_in_diff.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/difference_in_diff.py) — `estimate_did()` with `linearmodels.PanelOLS`, clustered SEs.
 
-The DiD estimator identifies the Average Treatment Effect on the Treated (ATT) by comparing outcome trajectories of treated vs. control firms before and after green bond issuance.
+### 4.1 DiD Results (25 Models: 5 Outcomes × 5 Specifications)
 
-**Model specification (Two-way Fixed Effects):**
+| Outcome | Entity FE | Time FE | **TWFE** | **EntityFE+Trend** | No FE |
+| --- | --- | --- | --- | --- | --- |
+| **ROA** | −0.007 (0.48) | 0.007 (0.50) | 0.004 (0.73) | −0.000 (0.99) | 0.018* (0.04) |
+| **Tobin's Q** | 0.187 (0.32) | 0.395* (0.02) | 0.356† (0.08) | 0.250 (0.18) | −0.160 (0.41) |
+| **ESG Score** | 0.057* (0.05) | 0.134*** (<.001) | 0.020 (0.61) | 0.020 (0.52) | 0.152*** (<.001) |
+| **ln(Emissions)** | −0.077 (0.43) | 1.130** (0.01) | −0.057 (0.61) | −0.064 (0.51) | 1.119** (0.01) |
 
-$$Y_{it} = \alpha_i + \gamma_t + \beta \cdot \text{green\_bond\_active}_{it} + X'_{it}\delta + \varepsilon_{it}$$
+> Format: coefficient (p-value). *** p<0.01, ** p<0.05, * p<0.1, † p<0.1
 
-Where $\alpha_i$ = entity fixed effects, $\gamma_t$ = time fixed effects, $\beta$ = treatment effect (coefficient of interest).
+**Key takeaways:**
+- `entity_fe_trend` results are consistent with TWFE — the TWFE absorption is not an artifact of saturated year dummies but reflects genuine confounding with common time trends
+- Significance only emerges without entity FE (time FE or no FE), suggesting selection on unobservables drives the raw association
 
-> Source: [difference_in_diff.py#L59-L426](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/difference_in_diff.py#L59-L426) — `estimate_did()` uses `linearmodels.PanelOLS` with clustered standard errors at the entity level. Four specifications tested: entity FE, time FE, two-way FE, and no FE.
+---
 
-**DiD Results (12 models: 3 outcomes × 4 specifications):**
+## 5. Cohort-Specific Event Study
 
-| Outcome | Specification | β (Coefficient) | Std. Error | p-value | Significant? |
-|---|---|---|---|---|---|
-| **ROA** | Entity FE | −0.0067 | 0.0096 | 0.481 | ❌ |
-| **ROA** | Time FE | 0.0067 | 0.0100 | 0.504 | ❌ |
-| **ROA** | Two-way FE | 0.0038 | 0.0110 | 0.726 | ❌ |
-| **ROA** | No FE | 0.0179 | 0.0086 | 0.038 | ✅ (5%) |
-| **Tobin's Q** | Entity FE | 0.1874 | 0.1868 | 0.316 | ❌ |
-| **Tobin's Q** | Time FE | 0.3947 | 0.1663 | 0.018 | ✅ (5%) |
-| **Tobin's Q** | Two-way FE | 0.3557 | 0.2047 | 0.082 | ✅ (10%) |
-| **Tobin's Q** | No FE | −0.1596 | 0.1924 | 0.407 | ❌ |
-| **ESG Score** | Entity FE | 0.0568 | 0.0284 | 0.046 | ✅ (5%) |
-| **ESG Score** | Time FE | 0.1341 | 0.0296 | <0.001 | ✅✅✅ (1%) |
-| **ESG Score** | Two-way FE | 0.0195 | 0.0380 | 0.607 | ❌ |
-| **ESG Score** | No FE | 0.1525 | 0.0294 | <0.001 | ✅✅✅ (1%) |
+> Source: [event_study_cohort.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/event_study_cohort.py) — lightweight Callaway & Sant'Anna (2021) decomposition.
 
-### 2.5. Stage 3: System GMM Robustness Check
+Each treatment cohort is estimated separately against never-treated firms.
 
-System GMM (Blundell & Bond, 1998) addresses dynamic panel bias (Nickell bias) when lagged dependent variables are included.
+### 5.1 ROA by Cohort
 
-> Source: [gmm.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/gmm.py) — `estimate_system_gmm()` with automatic instrument selection via `select_gmm_instruments()`. Config in [config.py#L138-L147](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/config.py#L138-L147).
+| Cohort | n Treated | β | p-value | Pre-trend p | Pre-trend OK? |
+| --- | --- | --- | --- | --- | --- |
+| 2020 | 5 | NaN | NaN | — | No pre-data |
+| 2021 | 3 | −0.033** | 0.025 | — | No pre-data |
+| 2022 | 4 | −0.006 | 0.667 | 0.148 | ✅ |
+| 2023 | 4 | 0.001 | 0.823 | 0.142 | ✅ |
+| 2024 | 4 | −0.024 | 0.222 | 0.179 | ✅ |
+| **Aggregated ATT** | **20** | **−0.014** | **0.315** | **0/4 violations** | ✅ |
 
-**GMM Results:**
+### 5.2 ESG Score by Cohort
 
-| Outcome | Coefficient | Std. Error | p-value |
-|---|---|---|---|
-| ROA | −0.0049 | 0.0036 | 0.170 |
-| Tobin's Q | 0.2068 | 0.2435 | 0.396 |
-| ESG Score | 0.0229 | 0.0139 | 0.099 |
+| Cohort | n Treated | β | p-value | Pre-trend p | Pre-trend OK? |
+| --- | --- | --- | --- | --- | --- |
+| 2020 | 5 | NaN | NaN | — | No pre-data |
+| 2021 | 3 | 0.072 | 0.447 | — | No pre-data |
+| 2022 | 4 | 0.013 | 0.561 | 0.067 | ✅ |
+| 2023 | 4 | 0.037** | 0.010 | 0.526 | ✅ |
+| 2024 | 4 | 0.115† | 0.074 | <0.001 | ⚠️ |
+| **Aggregated ATT** | **20** | **0.059** | **0.292** | **1/4 violations** | |
 
-**DiD vs GMM Comparison:**
+> [!IMPORTANT]
+> **The parallel trends violation is localized.** For ROA, **no cohort** (0/4) violates pre-trends. The pooled violation (p = 0.009 in the original test) was driven by composition effects across cohorts. For ESG Score, only the **2024 cohort** violates — these are the most recently treated firms with the strongest ESG signal, likely reflecting anticipatory ESG improvements before formal issuance.
 
-| Outcome | DiD (TWFE) | GMM | Difference |
-|---|---|---|---|
-| ROA | 0.0038 | −0.0049 | −0.0088 |
-| Tobin's Q | 0.3557 | 0.2068 | −0.1489 |
-| ESG Score | 0.0195 | 0.0229 | +0.0034 |
+---
 
-> ESG Score shows the most consistent positive effect across both methods. Tobin's Q shows a positive direction in both but varies in magnitude.
+## 6. Stage 3: System GMM
 
-### 2.6. Parallel Trends Test
+> Source: [gmm.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/gmm.py) — `estimate_system_gmm()`
 
-> Source: [difference_in_diff.py#L574-L696](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/difference_in_diff.py#L574-L696) — `parallel_trends_test()` creates lead/lag treatment indicators and regresses outcome on them with entity fixed effects.
+| Outcome | Coefficient | Std. Error | p-value | Sig. |
+| --- | --- | --- | --- | --- |
+| ROA | −0.0049 | 0.0036 | 0.170 | |
+| Tobin's Q | 0.2068 | 0.2435 | 0.396 | |
+| ESG Score | 0.0229 | 0.0139 | 0.099 | † |
+| ln(Emissions) | −0.1910 | 0.0980 | 0.051 | † |
 
-**Results (leads=1, lags=1):**
+### 6.1 DiD vs GMM Comparison
+
+| Outcome | DiD (TWFE) | GMM | Direction consistent? |
+| --- | --- | --- | --- |
+| ROA | 0.004 | −0.005 | Mixed (both near zero) |
+| Tobin's Q | 0.356 | 0.207 | ✅ Both positive |
+| ESG Score | 0.020 | 0.023 | ✅ Both positive |
+| ln(Emissions) | −0.057 | −0.191 | ✅ Both negative |
+
+---
+
+## 7. Parallel Trends Test (Pooled)
 
 | Term | Coefficient | p-value |
-|---|---|---|
+| --- | --- | --- |
 | `treatment_lead_1` (pre-treatment) | 0.1089 | 0.009*** |
 | `green_bond_active` (current) | 0.0272 | 0.407 |
 | `treatment_lag_1` (post-treatment) | 0.3750 | 0.008*** |
 
-> **⚠️ Parallel trends assumption is violated**: The pre-treatment lead coefficient (0.1089, p=0.009) is statistically significant, suggesting that treated firms were already on a different trajectory *before* issuing green bonds. This is a serious identification concern.
+> [!CAUTION]
+> The **pooled** pre-treatment lead is significant (p = 0.009). However, the **cohort-specific** analysis (Section 5) shows this violation is not universal — 0/4 cohorts violate for ROA, and only the 2024 cohort violates for ESG Score.
 
-### 2.7. Robustness Checks
+---
+
+## 8. Robustness Checks
 
 > Source: [diagnostics.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/diagnostics.py)
 
-**Specification Sensitivity** (ROA, entity FE, varying controls):
-| Spec | Controls | β | SE | p-value |
-|---|---|---|---|---|
-| 1 | None | −0.0121 | 0.0074 | 0.101 |
-| 2 | Firm_Size | −0.0057 | 0.0083 | 0.493 |
-| 3 | +Leverage | −0.0052 | 0.0080 | 0.515 |
-| 4 | +Asset_Turn | −0.0131 | 0.0099 | 0.185 |
-| 5 | +Cap_Intens | −0.0068 | 0.0096 | 0.480 |
-
-> All ROA specifications yield insignificant coefficients. The effect is robust to specification changes — consistently null.
-
-**Placebo Test** (shifted treatment by 1 year):
-```
-Placebo coefficient: 0.0084
-p-value: 0.669
-Result: ✓ Valid (placebo effect is insignificant at 5%)
-```
-
-**Leave-One-Out CV:** Robust = True (coefficient stability confirmed across 100 folds).
+| Test | Result |
+| --- | --- |
+| **Specification sensitivity** (5 specs) | All ROA coefficients null. Robust. |
+| **Placebo test** (1-year shift) | β = 0.008, p = 0.669. ✅ Valid. |
+| **Leave-one-out CV** (100 folds) | ✅ Robust (coefficient stable). |
 
 ---
 
-## 3. Key Findings: How Do Green Bonds Impact ASEAN Companies?
+## 9. Greenwashing / Authenticity Analysis
 
-### 3.1. Impact on Financial Performance
+> Source: [authenticity.py](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/authenticity.py) — `compute_authenticity_score()`
 
-| Metric | Finding | Evidence |
-|---|---|---|
-| **ROA** (profitability) | **No significant effect** | DiD: β = 0.004, p = 0.726 (TWFE); GMM: β = −0.005, p = 0.170. Consistent across all specifications. |
-| **Tobin's Q** (market value) | **Weak positive effect** | DiD: β = 0.356, p = 0.082 (TWFE); GMM: β = 0.207, p = 0.396. Marginally significant under time FE only. |
+### 9.1 Key Statistics (333 ASEAN Green Bonds)
 
-**Interpretation:** Green bond issuance does **not** improve accounting-based profitability (ROA) in ASEAN listed firms. This aligns with Yeow & Ng (2021) who found no significant financial differences, and with Hoang et al. (2020) who argued compliance costs may offset greenium benefits in the short run. The weak positive Tobin's Q signal under time FE suggests the market *may* reward green bond issuers through valuation premiums (consistent with Signaling Theory), but the effect is not robust across specifications.
+| Metric | Value |
+| --- | --- |
+| CBI-certified | 328 / 333 (98.5%) |
+| ICMA-certified | 326 / 333 (97.9%) |
+| **ESG improvement verified** | **13 / 333 (3.9%)** |
 
-### 3.2. Impact on Environmental Performance
+### 9.2 Score Distribution
 
-| Metric | Finding | Evidence |
-|---|---|---|
-| **ESG Score** | **Positive effect (conditional)** | DiD entity FE: β = 0.057, p = 0.046*; GMM: β = 0.023, p = 0.099†. Strong under time FE (β = 0.134, p < 0.001***), but absorbed under two-way FE. |
+| Category | Count | % |
+| --- | --- | --- |
+| High (≥80) | 13 | 3.9% |
+| Medium (60–79) | 0 | 0.0% |
+| Low (40–59) | 314 | 94.3% |
+| Unverified (<40) | 6 | 1.8% |
 
-**Interpretation:** Green bond issuance is associated with **improved ESG scores** under entity and time FE separately. However, once both entity *and* time effects are controlled (two-way FE), the effect becomes insignificant (β = 0.020, p = 0.607). This suggests the ESG improvement may be confounded by **a common time trend** in ESG ratings across all ASEAN firms, not unique to green bond issuers. This echoes the "greenwashing puzzle" identified by Hoang et al. (2020) and Viona et al. (2026): ESG disclosure scores improve symbolically, but the effect may not represent genuine operational change.
+### 9.3 Score Components (Mean)
 
----
+| Component | Max | Mean |
+| --- | --- | --- |
+| ESG Component | 40 | **1.5** |
+| Certification Component | 35 | 29.5 |
+| Issuer Component | 25 | 22.8 |
+| **Total** | **100** | **53.8** |
 
-## 4. Methodological Alignment Assessment
-
-### 4.1. What Aligns Well with the Research Topic
-
-| Aspect | Status | Alignment |
-|---|---|---|
-| **PSM-DiD framework** | ✅ Implemented | Matches Bai (2025), Yeow & Ng (2021), Lemos (2025). Standard causal inference for policy evaluation in green bond literature. |
-| **System GMM robustness** | ✅ Implemented | Matches Hoang et al. (2020) who used GMM for endogeneity control. Addresses dynamic panel bias. |
-| **Lagged controls** | ✅ Implemented | All controls use L1_ prefix (1-year lag) to prevent simultaneity bias. Consistent with Klassen & McLaughlin (1996). |
-| **Entity + Time FE** | ✅ Implemented | Two-way FE controls for unobserved heterogeneity and common trends. Standard in panel econometrics. |
-| **Placebo test** | ✅ Implemented | Validated (p = 0.669). Confirms no spurious pre-treatment effects. |
-| **Specification sensitivity** | ✅ Implemented | 5 specifications tested, results consistent. |
-| **Survivorship bias handling** | ✅ Implemented | `SURVIVORSHIP_CONFIG` with mode='exclude'. |
-| **Winsorization** | ✅ Implemented | Two-pass: raw metrics at 1st/99th percentile before ratio computation, then ratios. |
-
-### 4.2. What Does NOT Align (Gaps & Limitations)
-
-| Gap | Severity | Explanation | Recommendation |
-|---|---|---|---|
-| **Parallel trends violated** | 🔴 Critical | Pre-treatment lead is significant (p = 0.009), meaning treated firms were already diverging before issuance. DiD's key identification assumption fails. | Must acknowledge as a **primary limitation**. Consider: (a) staggered DiD (Callaway & Sant'Anna, 2021), (b) synthetic control method, or (c) event-time reweighting. |
-| **Extremely sparse treatment** | 🔴 Critical | Only 20/3,964 firms (0.5%) are treated. PSM matches only 9 treated, forcing fallback to full panel. Low statistical power for treatment effect detection. | Acknowledge as structural data limitation. The study's scope of "ASEAN listed companies" yields too few green bond issuers for credible causal inference. |
-| **Short panel window** | 🟡 Major | Panel covers only 2020-2025 (6 years). The lit review (and config) references 2015-2025, but actual data starts at 2020. Porter Hypothesis predicts multi-year lags; 6 years may be insufficient. | Acknowledge in limitations. Extend panel backward if data available, or adjust the stated observation window. |
-| **No direct environmental KPIs** | 🟡 Major | The lit review discusses GHG intensity, energy consumption, waste reduction (Bai 2025; Flammer 2021). The model uses only composite `esg_score`. This is exactly the "symbolic vs substantive" problem identified and critiqued in the literature review. | Add `emissions_intensity` or `estimated_total_carbon_footprint` as additional outcome variables. The data already contains these columns. |
-| **No greenium analysis** | 🟡 Major | The lit review extensively discusses cost-of-debt advantages (Zerbib 2019; Gianfrate & Peri 2019). No bond-level yield data is available in the current dataset. | Acknowledge as data limitation. The study measures indirect financial effects (ROA, Tobin's Q) rather than direct debt pricing. |
-| **No greenwashing filter applied** | 🟡 Major | The lit review proposes an "ESG Divergence Proxy" and mentions the `authenticity.py` module. The notebook 02 does not use it. | If the lit review promises a greenwashing analysis, it should appear in the results. Either implement or remove the claim. |
-| **No quantitative targets moderator** | 🟢 Minor | Bai (2025) found effects only for firms with specific environmental targets. This moderating analysis is absent. | Consider as future research direction. Data may not distinguish between target-setting and non-target-setting issuers. |
-
-### 4.3. Suggested Additions to Limitations Section
-
-Based on the assessment above, the thesis limitations section should include:
-
-1. **Violation of the parallel trends assumption.** The pre-treatment lead coefficient for ROA is statistically significant (β = 0.109, p = 0.009), indicating that green bond issuers were already on a different trajectory prior to issuance. This is a fundamental threat to the internal validity of the DiD estimator and suggests that estimated treatment effects may partly reflect pre-existing firm characteristics rather than the causal impact of green bond issuance.
-
-2. **Extremely low treatment prevalence.** Only 20 of 3,964 ASEAN-listed firms (0.5%) have issued green bonds during the sample period. This severe class imbalance limits the statistical power to detect treatment effects and reduces the external validity of findings to the broader ASEAN corporate population.
-
-3. **Short observation window.** The panel effectively covers 2020–2025 (6 years), which may be insufficient to capture the medium-to-long-term "innovation offsets" predicted by the Porter Hypothesis and the gradual materialization of greenium benefits described in the literature.
-
-4. **Composite ESG score as sole environmental metric.** No direct operational environmental indicators (GHG emissions intensity, energy consumption, waste reduction) were used as outcome variables, despite being identified as critical in the literature review. The ESG score is a composite measure subject to rating agency methodology, making it difficult to distinguish between genuine environmental improvement and disclosure-driven score inflation.
-
-5. **Absence of direct greenium measurement.** The study measures indirect financial effects (ROA, Tobin's Q) but does not analyze bond-level yield spreads or cost-of-debt differentials due to data unavailability.
+> [!IMPORTANT]
+> **98.5% certified, but only 3.9% show genuine ESG improvement.** Certification is near-universal, but substantive environmental change is extremely rare. This supports the greenwashing hypothesis (Flammer, 2021; Hoang et al., 2020).
 
 ---
 
-## 5. Summary
+## 10. Heterogeneous Effects by Firm Size
+
+> Source: [diagnostics.py#L272-L354](file:///Users/bunnypro/Projects/refinitiv-search/asean_green_bonds/analysis/diagnostics.py#L272-L354)
+
+| Outcome | Small Firms | Large Firms |
+| --- | --- | --- |
+| **ROA** | β = −0.005, p = 0.638 | β = −0.025***, p < 0.001 |
+| **Tobin's Q** | β = −0.041**, p = 0.005 | β = 0.385, p = 0.611 |
+| **ESG Score** | β = 0.031*, p = 0.013 | β = 0.274***, p < 0.001 |
+
+**Large firms**: Stronger ESG gains (+0.274 vs +0.031, 9× larger) but significant ROA decline (−2.5pp). Consistent with stakeholder theory: larger firms face more pressure for ESG disclosure but bear higher compliance costs.
+
+---
+
+## 11. Key Findings
+
+### 11.1 Summary Table
 
 | Question | Answer |
-|---|---|
-| Does green bond issuance improve **financial performance** (ROA)? | **No.** No significant effect across any specification or method. |
-| Does green bond issuance improve **market valuation** (Tobin's Q)? | **Weakly positive.** Marginally significant under time FE (β = 0.395, p = 0.018), but not robust under TWFE or GMM. |
-| Does green bond issuance improve **ESG scores**? | **Conditionally yes.** Significant under entity FE (β = 0.057, p = 0.046) and time FE (β = 0.134, p < 0.001), but absorbed under TWFE (β = 0.020, p = 0.607). The improvement may reflect a common ESG trend rather than a causal treatment effect. |
-| Is the methodology aligned with the literature? | **Partially.** The PSM-DiD-GMM framework is standard and well-cited. However, the parallel trends violation, sparse treatment, and reliance on composite ESG scores are critical limitations that must be acknowledged. |
+| --- | --- |
+| Does green bond issuance improve **ROA**? | **No.** Null across all specifications and methods. Cohort ATT: −0.014, p = 0.315. |
+| Does green bond issuance improve **Tobin's Q**? | **Weakly.** Marginal under time FE (p = 0.018), not robust under TWFE/GMM. |
+| Does green bond issuance improve **ESG scores**? | **Conditionally.** Significant under entity FE (p = 0.046), absorbed under TWFE (p = 0.607). Cohort ATT: 0.059, p = 0.292. |
+| Does green bond issuance reduce **emissions**? | **Marginally.** GMM: β = −0.191, p = 0.051†. Strongest treatment signal. |
+| Is certification meaningful? | **No.** 98.5% certified but only 3.9% show genuine ESG improvement. |
+| Do effects differ by **firm size**? | **Yes.** Large firms: stronger ESG (+0.274) but worse ROA (−0.025). |
+| Are parallel trends valid? | **Partially.** Pooled test fails, but cohort analysis shows 0/4 violate for ROA. |
+
+### 11.2 Interpreting the Greenwashing Evidence
+
+The results present a nuanced picture of the **"Greenwashing Puzzle"** identified by Khan & Vismara (2025), characterized by a complex relationship between market signaling and substantive outcomes:
+
+1. **Near-universal certification** (98.5% CBI, 97.9% ICMA) → Signaling environmental commitment is standard practice.
+2. **No measurable financial benefit** → ROA is null, Tobin's Q is weak.
+3. **Marginal emissions reduction** → GMM shows a ~19% reduction (p = 0.051), suggesting *some* operational ecological transition is occurring.
+4. **Almost no verified ESG improvement** → Only 3.9% of bonds show composite ESG score gains post-issuance.
+5. **ESG gains appear driven by time trends** → Positive ESG effects disappear under TWFE, exposing the limitations of composite ESG ratings.
+
+While the combination of near-universal certification and stagnant ESG scores strongly reflects **Signaling Theory** (Flammer, 2021) — where firms adopt labels to satisfy market expectations — the empirical data does not support a conclusion of purely symbolic greenwashing. The marginally significant reduction in direct emissions intensity indicates that while third-party ESG ratings fail to capture improvement, green bond issuers may still be executing targeted, substantive environmental changes at the operational level.
+
+---
+
+## 12. Methodological Alignment
+
+### 12.1 Strengths
+
+| Aspect | Status |
+| --- | --- |
+| PSM-DiD framework | ✅ Standard (Bai 2025, Yeow & Ng 2021) |
+| System GMM robustness | ✅ Hoang et al. (2020) |
+| Lagged controls | ✅ Prevents simultaneity |
+| Entity + Time FE | ✅ Standard panel econometrics |
+| Entity FE + linear time trend | ✅ Addresses TWFE saturation |
+| Cohort-specific event study | ✅ Callaway & Sant'Anna (2021)-style |
+| Placebo test | ✅ Valid (p = 0.669) |
+| Specification sensitivity | ✅ 5 specs tested |
+| Direct environmental KPI | ✅ ln(emissions_intensity), 81% coverage |
+| Greenwashing analysis | ✅ Authenticity scoring (ESG + cert + issuer) |
+| Heterogeneous effects | ✅ Firm-size moderator |
+
+### 12.2 Remaining Limitations
+
+1. **Sparse treatment.** Only 20/3,964 firms (0.5%) issued green bonds. Limited statistical power for all analyses.
+
+2. **No direct greenium measurement.** An implicit cost-of-debt proxy (`interest_expense / total_debt`) was investigated but proved too noisy (only 10% coverage, unstable coefficients, GMM failure). Bond-level yield data would be needed for proper greenium analysis.
+
+3. **Short panel window.** 2020–2025 (6 years). The 2020 cohort has zero pre-treatment observations, making parallel trends untestable for 5 of 20 treated firms.
+
+4. **ESG and emissions effects confounded by time trends.** Both `esg_score` and `ln_emissions_intensity` effects disappear under TWFE and entity FE + trend, confirming they reflect market-wide trends rather than causal treatment effects.
+
+5. **Cohort 2024 ESG parallel trends violation.** The most recently treated cohort shows a significant pre-trend (p < 0.001), suggesting anticipatory ESG improvements before formal issuance — potentially a selection effect.

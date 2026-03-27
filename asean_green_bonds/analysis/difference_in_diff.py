@@ -90,6 +90,7 @@ def estimate_did(
         - 'entity_fe': Entity fixed effects only
         - 'time_fe': Time fixed effects only
         - 'twoway_fe': Both entity and time fixed effects
+        - 'entity_fe_trend': Entity FE + linear time trend (no year dummies)
         - 'none': No fixed effects, just time dummies
         (default: 'entity_fe')
     cluster_entity : bool, optional
@@ -306,6 +307,15 @@ def estimate_did(
         elif specification == 'twoway_fe':
             model = PanelOLS(
                 y, X, entity_effects=True, time_effects=True,
+                check_rank=False, drop_absorbed=True, weights=weights
+            )
+        elif specification == 'entity_fe_trend':
+            # Entity FE + linear time trend (avoids saturated year dummies)
+            time_values = y.index.get_level_values(time_col)
+            X = X.copy()
+            X['time_trend'] = (time_values - time_values.min()).astype(float)
+            model = PanelOLS(
+                y, X, entity_effects=True, time_effects=False,
                 check_rank=False, drop_absorbed=True, weights=weights
             )
         else:  # 'none'

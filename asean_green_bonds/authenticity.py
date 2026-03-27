@@ -720,7 +720,17 @@ def calculate_authenticity_tiered(
     result_df['tier_description'] = 'Certification_Only'
     result_df['authenticity_tier'] = 3
     
-    issuance_years = result_df['Dates: Issue Date'].str.extract(r'(\d{4})')[0].astype(float)
+    # Parse years from Dates: Issue Date (handle both strings and datetime objects)
+    if pd.api.types.is_datetime64_any_dtype(result_df['Dates: Issue Date']):
+        issuance_years = result_df['Dates: Issue Date'].dt.year
+    else:
+        # Fallback for strings
+        try:
+            # First try parsing as datetime to be safe
+            issuance_years = pd.to_datetime(result_df['Dates: Issue Date'], errors='coerce').dt.year
+        except:
+            # Final fallback to regex if datetime parsing fails
+            issuance_years = result_df['Dates: Issue Date'].astype(str).str.extract(r'(\d{4})')[0].astype(float)
     
     for idx, row in result_df.iterrows():
         issuer = row['match_name']

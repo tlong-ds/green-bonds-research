@@ -696,10 +696,13 @@ def lasso_feature_selection(
     X: pd.DataFrame,
     y: pd.Series,
     cv: int = 5,
-    random_state: int = 42
+    random_state: int = 42,  # noqa: ignored – lasso_feature_selection_old has no random_state
 ) -> List[str]:
     """
     [BACKWARD COMPATIBILITY ALIAS]
     Use validate_specification() for diagnostic validation instead.
+
+    Note: ``random_state`` is accepted for API compatibility but ignored;
+    ``lasso_feature_selection_old`` uses ``max_iter=10000`` internally.
     """
-    return lasso_feature_selection_old(X, y, cv, random_state)
+    return lasso_feature_selection_old(X, y, cv)

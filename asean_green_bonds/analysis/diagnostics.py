@@ -327,6 +327,14 @@ def heterogeneous_effects_analysis(
             continue
         
         df_group = working_df[working_df[group_var] == group_val]
+        
+        # Check for variation in treatment within the group
+        if df_group[treatment_col].nunique() < 2:
+            effects[f'{group_var}_{group_val}'] = {
+                'error': f'Treatment variable {treatment_col} has no variation in this subgroup'
+            }
+            continue
+            
         did_result = estimate_did(
             df_group,
             outcome=outcome,

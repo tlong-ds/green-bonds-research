@@ -647,6 +647,14 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[df['Tobin_Q'] < 0, 'Tobin_Q'] = np.nan
         df.loc[df['Tobin_Q'] > 10, 'Tobin_Q'] = 10  # Cap at 10
     
+    # Implied Cost of Debt: interest expense / total debt (greenium proxy)
+    if 'interest_expense_total' in df.columns and 'total_debt' in df.columns:
+        df['implied_cost_of_debt'] = np.where(
+            (df['total_debt'] > 0) & (df['total_debt'].notna()) & (df['interest_expense_total'].notna()),
+            df['interest_expense_total'] / df['total_debt'],
+            np.nan
+        )
+    
     return df
 
 
@@ -1446,6 +1454,15 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
     if drop_cols:
         panel = panel.drop(columns=drop_cols)
 
+    # Propagate certification/greenwashing attributes firm-wide (so we can compare certified vs non-certified firms)
+    if "org_permid" in panel.columns:
+        hetero_cols = ["is_certified_majority", "share_certified_proceeds", "self_labeled_share"]
+        for col in hetero_cols:
+            if col in panel.columns:
+                # Propagate max value per firm across all their years
+                panel[col] = panel.groupby("org_permid")[col].transform("max")
+                panel[col] = panel[col].fillna(0)
+
     # Write output if requested
     if write_path is None:
         write_path = config.PROCESSED_DATA_FILES.get("full_panel")
@@ -1602,7 +1619,7 @@ def prepare_full_panel_data(
 
     # Feature engineering (now operates on cleaned inputs)
     panel = create_financial_ratios(panel)
-    panel = create_log_features(panel, cols_to_log=["total_assets", "employees", "net_sales_or_revenues"])
+    panel = create_log_features(panel, cols_to_log=["total_assets", "employees", "net_sales_or_revenues", "emissions_intensity"])
 
     # Pass 2: Winsorize computed ratios for residual outliers
     ratio_winsor_cols = [
