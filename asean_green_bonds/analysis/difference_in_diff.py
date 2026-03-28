@@ -121,10 +121,8 @@ def estimate_did(
         )
     
     if control_vars is None:
-        control_vars = [
-            'L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover',
-            'L1_Capital_Intensity'
-        ]
+        from ..config import CONTROL_VARIABLES
+        control_vars = CONTROL_VARIABLES
     
     # Prepare data
     df_reg = prepare_panel_for_regression(df, entity_col, time_col, set_index=True)

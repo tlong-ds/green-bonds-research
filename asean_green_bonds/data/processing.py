@@ -648,12 +648,17 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[df['Tobin_Q'] > 10, 'Tobin_Q'] = 10  # Cap at 10
     
     # Implied Cost of Debt: interest expense / total debt (greenium proxy)
+    # NOTE: We filter out firms with very small total debt to avoid exploding ratios
     if 'interest_expense_total' in df.columns and 'total_debt' in df.columns:
         df['implied_cost_of_debt'] = np.where(
-            (df['total_debt'] > 0) & (df['total_debt'].notna()) & (df['interest_expense_total'].notna()),
+            (df['total_debt'] > 1e6) & (df['total_debt'].notna()) & (df['interest_expense_total'].notna()),
             df['interest_expense_total'] / df['total_debt'],
             np.nan
         )
+        
+        # Explicitly handle extreme outliers for Cost of Debt (e.g. > 50% is economically implausible for standard debt)
+        df.loc[df['implied_cost_of_debt'] < 0, 'implied_cost_of_debt'] = np.nan
+        df.loc[df['implied_cost_of_debt'] > 0.5, 'implied_cost_of_debt'] = np.nan
     
     return df
 
@@ -1483,8 +1488,6 @@ def build_full_panel_data(write_path: Optional["Path"] = None) -> pd.DataFrame:
                     panel[col] = panel[col].fillna(0)
 
     # Write output if requested
-    if write_path is None:
-        write_path = config.PROCESSED_DATA_FILES.get("full_panel")
     if write_path is not None:
         Path(write_path).parent.mkdir(parents=True, exist_ok=True)
         panel.to_csv(write_path, index=False)
@@ -1643,7 +1646,7 @@ def prepare_full_panel_data(
     # Pass 2: Winsorize computed ratios for residual outliers
     ratio_winsor_cols = [
         "Leverage", "Asset_Turnover", "Cash_Ratio",
-        "Capital_Intensity", "Tobin_Q",
+        "Capital_Intensity", "Tobin_Q", "implied_cost_of_debt",
     ]
     panel = winsorize_outliers(panel, include_cols=ratio_winsor_cols)
 
@@ -1654,6 +1657,7 @@ def prepare_full_panel_data(
         vars_to_lag=[
             "Firm_Size", "Leverage", "Asset_Turnover", "Cash_Ratio",
             "Capital_Intensity", "return_on_assets", "Tobin_Q", "esg_score",
+            "implied_cost_of_debt",
         ],
         lags=[1],
     )
@@ -1702,6 +1706,14 @@ def prepare_full_panel_data(
 
     panel = panel.sort_values(by=["ric", "Year"]).reset_index(drop=True)
 
+    # Write output if requested (Standard cleaned panel)
+    if write_path is None:
+        write_path = config.PROCESSED_DATA_FILES.get("full_panel")
+    if write_path is not None:
+        from pathlib import Path
+        Path(write_path).parent.mkdir(parents=True, exist_ok=True)
+        panel.to_csv(write_path, index=False)
+
     # Optional survivorship handling for analysis sample
     analysis_panel = panel
     if survivorship_mode != "ignore":
@@ -1713,16 +1725,6 @@ def prepare_full_panel_data(
             recent_years=recent_years,
             **survivorship_kwargs,
         )
-
-    # Write output if requested
-    if write_path is None:
-        write_path = config.PROCESSED_DATA_FILES.get("cleaned")
-    if write_path is not None:
-        from pathlib import Path
-        Path(write_path).parent.mkdir(parents=True, exist_ok=True)
-        panel.to_csv(write_path, index=False)
-
-    if survivorship_mode != "ignore":
         if analysis_write_path is None:
             analysis_write_path = config.PROCESSED_DATA_FILES.get("analysis")
         if analysis_write_path is not None:

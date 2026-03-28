@@ -42,7 +42,7 @@ def select_gmm_instruments(
     entity_col: str = 'org_permid',
     time_col: str = 'Year',
     max_lags: int = 3,
-    min_obs_fraction: float = 0.3,
+    min_obs_fraction: float = 0.1,
 ) -> List[str]:
     """
     Automatically select valid instruments based on data availability.
@@ -103,7 +103,7 @@ def _select_lagged_instruments_for_variable(
     entity_col: str = 'org_permid',
     time_col: str = 'Year',
     max_lags: int = 3,
-    min_obs_fraction: float = 0.3,
+    min_obs_fraction: float = 0.1,
 ) -> List[str]:
     """Create lagged instruments L2..Lk for a single variable when coverage is adequate."""
     if variable not in df.columns:
@@ -389,7 +389,7 @@ def estimate_system_gmm(
     control_vars: Optional[List[str]] = None,
     instruments: Optional[List[str]] = None,
     max_lags: Optional[int] = None,
-    min_obs_fraction: float = 0.3,
+    min_obs_fraction: float = 0.1,
     endogenous_treatment: bool = False,
     max_instruments: Optional[int] = 20,
     cov_type: str = 'clustered',
@@ -478,10 +478,8 @@ def estimate_system_gmm(
     
     # Default control variables
     if control_vars is None:
-        control_vars = [
-            'L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover',
-            'L1_Capital_Intensity'
-        ]
+        from ..config import CONTROL_VARIABLES
+        control_vars = CONTROL_VARIABLES
     
     if survivorship_kwargs is None:
         survivorship_kwargs = {}
@@ -591,26 +589,82 @@ def estimate_system_gmm(
         return _error_result(f"Insufficient observations after cleaning: {len(y_clean)}", n_obs=len(y_clean))
 
     # FINAL RANK CHECK: Avoid singular matrices by dropping collinear variables
-    def _ensure_full_rank(df_x: pd.DataFrame) -> pd.DataFrame:
+    def _ensure_full_rank(df_x: pd.DataFrame, protect: List[str] = []) -> pd.DataFrame:
         if df_x is None or df_x.empty:
             return df_x
-        # Drop perfectly collinear columns
-        corr = df_x.corr().abs()
-        upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-        to_drop = [column for column in upper.columns if any(upper[column] > 0.999)]
-        if to_drop:
-            return df_x.drop(columns=to_drop)
-        return df_x
+        
+        # Iteratively drop columns with high correlation
+        current_df = df_x.copy()
+        
+        # 1. Check for constant columns
+        const_cols = [c for c in current_df.columns if current_df[c].std() < 1e-10 and c not in protect]
+        if const_cols:
+            current_df = current_df.drop(columns=const_cols)
+            
+        # 2. Check for high correlation
+        max_iter = 10
+        for _ in range(max_iter):
+            corr = current_df.corr().abs()
+            upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+            
+            # Find pairs with correlation > 0.95
+            high_corr_pairs = []
+            for col in upper.columns:
+                for idx in upper.index:
+                    if upper.loc[idx, col] > 0.95:
+                        high_corr_pairs.append((idx, col, upper.loc[idx, col]))
+            
+            if not high_corr_pairs:
+                break
+                
+            # Sort by correlation strength
+            high_corr_pairs.sort(key=lambda x: x[2], reverse=True)
+            
+            # Decide which one to drop from the first pair
+            c1, c2, val = high_corr_pairs[0]
+            
+            # If one is protected, drop the other
+            if c1 in protect and c2 not in protect:
+                to_drop = c2
+            elif c2 in protect and c1 not in protect:
+                to_drop = c1
+            elif c1 in protect and c2 in protect:
+                # Both protected - can't drop, move to next pair or break
+                continue
+            else:
+                # Neither protected - drop the one with more NaNs in original or just the second one
+                to_drop = c2
+                
+            current_df = current_df.drop(columns=[to_drop])
+            
+        return current_df
 
-    exog_clean = _ensure_full_rank(exog_clean)
+    exog_clean = _ensure_full_rank(exog_clean, protect=[treatment_col, 'const'])
     if endog_clean is not None:
-        endog_clean = _ensure_full_rank(endog_clean)
+        endog_clean = _ensure_full_rank(endog_clean, protect=[treatment_col])
+    
+    # Instruments rank check (instruments are many, so we can be more aggressive)
     instruments_clean = _ensure_full_rank(instruments_clean)
 
-    # Re-verify that treatment column hasn't been dropped (if it was perfectly collinear, we can't estimate)
+    # Cross-matrix correlation check (instruments vs regressors)
+    if not instruments_clean.empty:
+        regressors = exog_clean.copy()
+        if endog_clean is not None:
+            regressors = pd.concat([regressors, endog_clean], axis=1)
+        
+        to_drop_instr = []
+        for instr_col in instruments_clean.columns:
+            for reg_col in regressors.columns:
+                corr_val = abs(np.corrcoef(instruments_clean[instr_col], regressors[reg_col])[0, 1])
+                if corr_val > 0.95:
+                    to_drop_instr.append(instr_col)
+                    break
+        if to_drop_instr:
+            instruments_clean = instruments_clean.drop(columns=to_drop_instr)
+
+    # Re-verify that treatment column hasn't been dropped
     if treatment_col not in exog_clean.columns and (endog_clean is None or treatment_col not in endog_clean.columns):
-        if not endogenous_treatment:
-             return _error_result(f"Treatment variable '{treatment_col}' is perfectly collinear with other variables.", n_obs=len(y_clean))
+         return _error_result(f"Treatment variable '{treatment_col}' is perfectly collinear with other variables.", n_obs=len(y_clean))
 
     # Estimate GMM model
     try:
@@ -645,6 +699,10 @@ def estimate_system_gmm(
                 results = model.fit(cov_type='robust')
         else:
             results = model.fit(cov_type='robust')
+        
+        # Robustness check: if SEs are NaNs, estimation is not valid
+        if results.std_errors.isna().any():
+            cov_warning = f"Some standard errors are NaN. Estimation may be invalid. Check for perfect multicollinearity."
         
     except Exception as e:
         error_msg = str(e)

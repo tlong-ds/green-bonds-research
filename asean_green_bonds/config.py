@@ -59,7 +59,14 @@ CONTROL_VARIABLES = [
     "L1_Leverage",
     "L1_Asset_Turnover",
     "L1_Capital_Intensity",
-    "L1_Cash_Ratio",  # Added for completeness
+    "L1_Cash_Ratio",
+    "asset_tangibility",
+]
+
+# Additional firm-level attributes for descriptive analysis
+DESCRIPTIVE_CONTROLS = [
+    "issuer_track_record",
+    "has_green_framework",
 ]
 
 # PSM features - NOTE: prior_green_bonds removed due to perfect collinearity with issuer_track_record

@@ -36,21 +36,21 @@
 
 | Test | LM Stat | *p*-value | Conclusion |
 |:---|:---|:---|:---|
-| Breusch-Pagan | 1016.84 | 0.0000 | Heteroscedasticity present |
+| Breusch-Pagan | 1015.4856 | 0.0000 | Heteroscedasticity present |
 
 **Table A.4**
 *Wooldridge Test for Autocorrelation*
 
 | Test | F-stat | *p*-value | Conclusion |
 |:---|:---|:---|:---|
-| Wooldridge (FD) | 46.05 | 0.0000 | Serial correlation present |
+| Wooldridge (FD) | 30.6918 | 0.0000 | Serial correlation present |
 
 **Table A.5**
 *Pesaran CD Test for Cross-Sectional Dependence*
 
 | Test | Statistic | Conclusion |
 |:---|:---|:---|
-| Pesaran CD | 72.87 | Cross-sectional dependence present |
+| Pesaran CD | 72.8667 | Cross-sectional dependence present |
 
 *Note.* All diagnostic tests reject the null hypotheses of homoscedasticity, no serial correlation, and cross-sectional independence. Consequently, all regression models report standard errors clustered at the entity level to ensure valid inference.
 
