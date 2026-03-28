@@ -40,7 +40,8 @@ The study draws on firm-level panel data retrieved from LSEG Datastream/Workspac
 
 *Note.* Source: LSEG Datastream/Workspace. Panel constructed via `prepare_full_panel_data()`.
 
-Outlier treatment follows a two-pass winsorization procedure. In the first pass, 18 raw financial metrics are winsorized at the 1st and 99th percentiles. In the second pass, five computed financial ratios are winsorized at the same thresholds. Additionally, emissions intensity is log-transformed as $\ln(\max(1, \text{emissions\_intensity}))$ to address severe right skew in the raw distribution (range: 0 to 1.04 × 10⁹).
+Outlier treatment follows a two-pass winsorization procedure.
+ In the first pass, 18 raw financial metrics are winsorized at the 1st and 99th percentiles. In the second pass, five computed financial ratios are winsorized at the same thresholds. Additionally, emissions intensity is log-transformed as $\ln(\max(1, \text{emissions\_intensity}))$ to address severe right skew in the raw distribution (range: 0 to 1.04 × 10⁹).
 
 ---
 
@@ -87,9 +88,41 @@ To mitigate omitted variable bias, all regression specifications include a vecto
 
 ---
 
-### 3.4. Research Models
+### 3.4. Descriptive Statistics
 
-#### 3.4.1. Propensity Score Matching Model (First Stage)
+**Table 3.4**
+*Descriptive Statistics — Full Sample and Group Comparison*
+
+**Panel A: Full Sample (N = 23,284)**
+| Variable | count | mean | std | min | 25% | 50% | 75% | max |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Return on Assets (ROA) | 21,727 | 0.0353 | 0.1062 | -0.4902 | 0.0068 | 0.0377 | 0.0764 | 0.3670 |
+| Tobin's Q | 20,634 | 1.4021 | 1.3492 | 0.3211 | 0.7629 | 0.9934 | 1.4583 | 9.5867 |
+| ESG Score | 4,143 | 0.4763 | 0.1786 | 0.0957 | 0.3379 | 0.4727 | 0.6095 | 0.8545 |
+| ln(Emissions Intensity) | 18,888 | 10.4390 | 2.6335 | -5.5116 | 8.7838 | 10.3553 | 11.9394 | 20.7667 |
+| L1_Firm_Size | 19,298 | 11.8335 | 2.0191 | 7.2540 | 10.4778 | 11.6233 | 12.9959 | 17.5891 |
+| L1_Leverage | 19,298 | 0.2259 | 0.2001 | 0.0000 | 0.0471 | 0.1877 | 0.3583 | 0.8607 |
+| L1_Asset_Turnover | 19,279 | 0.6699 | 0.6750 | 0.0001 | 0.1850 | 0.4943 | 0.9193 | 3.7762 |
+| L1_Capital_Intensity | 19,279 | 167.345 | 1421.33 | 0.2648 | 1.0878 | 2.0231 | 5.4067 | 13097.3 |
+| L1_Cash_Ratio | 16,848 | 0.7926 | 1.6380 | 0.0030 | 0.1014 | 0.2827 | 0.7399 | 11.9198 |
+
+**Panel B: Treated vs. Untreated Comparison (Means)**
+| Variable | Treated (Mean) | Untreated (Mean) | Difference |
+|:---|---:|---:|---:|
+| Return on Assets (ROA) | 0.0462 | 0.0353 | +0.0109 |
+| Tobin's Q | 1.2425 | 1.4027 | -0.1602 |
+| ESG Score | 0.6963 | 0.4736 | +0.2227*** |
+| ln(Emissions Intensity) | 13.8184 | 10.4282 | +3.3902*** |
+| L1_Firm_Size | 14.9437 | 11.8212 | +3.1225*** |
+| L1_Leverage | 0.4122 | 0.2252 | +0.1870*** |
+
+*Note.* Treated firms are significantly larger, more leveraged, and have higher ESG scores and emissions intensity (reflecting sector composition, i.e., heavy industry).
+
+---
+
+### 3.5. Research Models
+
+#### 3.5.1. Propensity Score Matching Model (First Stage)
 
 Propensity score matching is used to construct a counterfactual control group for green bond issuers based on observable pre-treatment firm characteristics. Each treated firm is matched to the most similar untreated firm(s) using nearest-neighbour matching within a caliper bound.
 
@@ -97,9 +130,9 @@ The propensity score *p*(*X*) is estimated via logistic regression:
 
 $$p(X_{it}) = \Pr(\text{green\_bond\_active}_{it} = 1 \mid X_{it})$$
 
-where $X_{it}$ denotes the vector of lagged control variables defined in Section 3.3.3. The caliper is set at $2 \times \sigma_p$ (following Austin, 2011), with a minimum floor of 0.05 standard deviations. Covariate balance is assessed using standardized mean differences (Cohen's *d*); balance is considered acceptable when all differences fall below 0.10.
+where $X_{it}$ denotes the vector of lagged control variables defined in Section 3.3.3 (Table 3.3). The caliper is set at $2 \times \sigma_p$ (following Austin, 2011), with a minimum floor of 0.05 standard deviations. Covariate balance is assessed using standardized mean differences (Cohen's *d*); balance is considered acceptable when all differences fall below 0.10.
 
-#### 3.4.2. Difference-in-Differences Model (Second Stage)
+#### 3.5.2. Difference-in-Differences Model (Second Stage)
 
 The baseline DiD specification is a Two-Way Fixed Effects (TWFE) panel regression estimated on the full unmatched panel (due to limited PSM coverage; see Section 4.3):
 
@@ -115,7 +148,7 @@ $$ATT(g, t) = \mathbb{E}[Y_{it}(g) - Y_{it}(0) \mid G_i = g]$$
 
 where $G_i = g$ denotes the cohort of firm *i* (i.e., the calendar year of first green bond issuance) and $Y_{it}(0)$ is the counterfactual potential outcome under no treatment.
 
-#### 3.4.3. Dynamic Panel Estimation Model (System GMM)
+#### 3.5.3. Dynamic Panel Estimation Model (System GMM)
 
 System GMM (Arellano & Bover, 1995; Blundell & Bond, 1998) is employed as the primary robustness estimator to address dynamic endogeneity, unobserved heterogeneity, and potential simultaneity between green bond issuance and firm performance:
 
@@ -125,9 +158,9 @@ The system GMM estimator combines the differenced equation (instrumenting with l
 
 ---
 
-### 3.5. Model Estimation and Evaluation
+### 3.6. Model Estimation and Evaluation
 
-#### 3.5.1. Parallel Trends Assumption
+#### 3.6.1. Parallel Trends Assumption
 
 The validity of the DiD estimator rests on the parallel trends assumption — that treated and control firms would have followed similar trajectories in the absence of treatment. This is tested via a pre-treatment event study specification including leads and lags of the treatment indicator:
 
@@ -135,7 +168,7 @@ $$Y_{it} = \alpha + \sum_{k=-2}^{+1} \gamma_k \cdot D_{it}^k + \beta X_{it-1} + 
 
 where $D_{it}^k$ is an indicator for $k$ periods relative to first green bond issuance. Evidence of significant pre-treatment leads ($k < 0$) would indicate a violation of parallel trends. Both pooled and cohort-specific pre-trend tests are reported.
 
-#### 3.5.2. Robustness Checks
+#### 3.6.2. Robustness Checks
 
 Three robustness procedures are conducted. First, specification sensitivity is assessed by estimating the treatment effect across all five DiD specifications. Second, a placebo test shifts the treatment date one year forward to verify that estimated effects are not driven by pre-existing trends. Third, leave-one-out cross-validation (100 folds) is used to assess the stability of the estimated treatment coefficients across subsamples.
 
@@ -143,41 +176,17 @@ Three robustness procedures are conducted. First, specification sensitivity is a
 
 ## CHAPTER IV. RESEARCH RESULTS AND DISCUSSION
 
-### 4.1. Descriptive Statistical Analysis
+### 4.1. Model Selection and Diagnostic Summary
 
-> *[Table 4.1: Descriptive statistics for all outcome and control variables — to be inserted. Include: N, mean, standard deviation, min, p25, median, p75, max, with treated vs. untreated comparison.]*
+Prior to estimating the main treatment effects, the panel data underwent rigorous diagnostic testing to ensure the validity of the econometric specifications. Summary statistics and group comparisons (see Section 3.4, Table 3.4) indicate significant pre-treatment differences between green bond issuers and non-issuers, particularly regarding firm size and ESG profile, justifying the use of Propensity Score Matching (PSM) and Two-Way Fixed Effects (TWFE).
 
----
+Technical diagnostics, including the Hausman test, Breusch-Pagan test for heteroscedasticity, Wooldridge test for autocorrelation, and Pesaran CD test for cross-sectional dependence, were conducted for all outcome variables. The results consistently reject the null hypotheses of homoscedasticity and independence, necessitating the use of entity-clustered standard errors across all specifications. Detailed diagnostic tables and the Pearson correlation matrix are provided in **Appendix A**.
 
-### 4.2. Correlation Analysis
-
-> *[Table 4.2: Pearson correlation matrix for main variables — to be inserted. Flag pairwise correlations > 0.70 for potential multicollinearity.]*
-
----
-
-### 4.3. Model Selection and Diagnostic Testing
-
-#### 4.3.1. Model Selection Results
-
-> *[Table 4.3: Hausman test results, F-test for fixed effects, and LM test for random effects — to be inserted. State chosen specification (TWFE) and justification.]*
-
-#### 4.3.2. Test for Heteroscedasticity
-
-> *[Table 4.4: Modified Wald test / Breusch-Pagan test results — to be inserted.]*
-
-#### 4.3.3. Test for Autocorrelation
-
-> *[Table 4.5: Wooldridge test for autocorrelation in panel data — to be inserted.]*
-
-#### 4.3.4. Test for Cross-Sectional Dependence
-
-> *[Table 4.6: Pesaran CD test results — to be inserted.]*
-
-#### 4.3.5. Propensity Score Matching Diagnostics
+### 4.2. Propensity Score Matching Diagnostics
 
 Logistic regression over the pre-treatment period yielded propensity scores for 16,831 firm-year observations. Nearest-neighbour matching within the specified caliper (0.05) produced 9 matched treated firms paired with 36 control firms (45 total matched observations), representing a match rate of 45% (9 out of 20 treated firms).
 
-**Table 4.7**
+**Table 4.1**
 *PSM Diagnostics*
 
 | Metric | Value |
@@ -191,9 +200,9 @@ Logistic regression over the pre-treatment period yielded propensity scores for 
 
 *Note.* Covariate balance criterion met: all standardized differences < 0.10. Due to low match rate, DiD and GMM are estimated on the full panel (23,284 observations).
 
-#### 4.3.6. Parallel Trends Test
+### 4.3. Parallel Trends Test
 
-**Table 4.8**
+**Table 4.2**
 *Pooled Parallel Trends Test*
 
 | Term | Coefficient | *p*-value |
@@ -206,9 +215,9 @@ Logistic regression over the pre-treatment period yielded propensity scores for 
 
 The pooled pre-treatment lead is statistically significant (*p* = .009), raising a potential concern about the parallel trends assumption. However, cohort-specific event studies (Section 4.4.1) reveal that this violation is not universal across cohorts: zero of four cohorts violate pre-trends for ROA, and only the 2024 cohort violates for ESG Score. The pooled significance reflects composition effects across staggered treatment cohorts rather than a systematic failure of the identification assumption.
 
-#### 4.3.7. Robustness Check Results
+### 4.4. Robustness Check Results
 
-**Table 4.9**
+**Table 4.3**
 *Robustness Check Summary*
 
 | Test | Result |
@@ -219,13 +228,13 @@ The pooled pre-treatment lead is statistically significant (*p* = .009), raising
 
 ---
 
-### 4.4. Regression Result Analysis
+### 4.5. Regression Result Analysis
 
-#### 4.4.1. Impact of Green Bonds on Corporate Environmental Performance
+#### 4.5.1. Impact of Green Bonds on Corporate Environmental Performance
 
 **Cohort-Specific Event Study: ESG Score**
 
-**Table 4.10**
+**Table 4.4**
 *Cohort-Specific ATT Estimates — ESG Score*
 
 | Cohort | *n* Treated | β | *p*-value | Pre-trend *p* | Pre-trend Valid? |
@@ -241,13 +250,13 @@ The pooled pre-treatment lead is statistically significant (*p* = .009), raising
 
 **Cohort-Specific Event Study: ln(Emissions Intensity)**
 
-GMM results (Table 4.13) indicate a negative but non-significant treatment effect on log emissions intensity (β = −0.084, *p* = .284) when using the full vector of theory-driven controls. While the point estimate remains negative across specifications (Table 4.14), its statistical significance is sensitive to the inclusion of firm-level characteristics such as asset tangibility and prior issuance history, suggesting that previously observed "green effects" may have been partially confounded by unobserved firm-level quality.
+GMM results (Table 4.7) indicate a negative but non-significant treatment effect on log emissions intensity (β = −0.084, *p* = .284) when using the full vector of theory-driven controls. While the point estimate remains negative across specifications (Table 4.8), its statistical significance is sensitive to the inclusion of firm-level characteristics such as asset tangibility and prior issuance history, suggesting that previously observed "green effects" may have been partially confounded by unobserved firm-level quality.
 
-#### 4.4.2. Impact of Green Bonds on Corporate Financial Performance
+#### 4.5.2. Impact of Green Bonds on Corporate Financial Performance
 
 **DiD Results (Full Panel, 5 Specifications)**
 
-**Table 4.11**
+**Table 4.5**
 *DiD Estimates by Outcome and Specification*
 
 | Outcome | Entity FE | Time FE | **TWFE** | Entity FE + Trend | No FE |
@@ -263,7 +272,7 @@ Significant effects under time-only fixed effects or pooled OLS (no FE) disappea
 
 **Cohort-Specific Event Study: ROA**
 
-**Table 4.12**
+**Table 4.6**
 *Cohort-Specific ATT Estimates — Return on Assets (ROA)*
 
 | Cohort | *n* Treated | β | *p*-value | Pre-trend *p* | Pre-trend Valid? |
@@ -279,7 +288,7 @@ Significant effects under time-only fixed effects or pooled OLS (no FE) disappea
 
 **System GMM Estimates**
 
-**Table 4.13**
+**Table 4.7**
 *System GMM Estimates — Treatment Effect of Green Bond Issuance*
 
 | Outcome | Coefficient | Std. Error | *p*-value | Significance | N-obs |
@@ -292,7 +301,7 @@ Significant effects under time-only fixed effects or pooled OLS (no FE) disappea
 
 *Note.* System GMM following Arellano and Bover (1995) and Blundell and Bond (1998). Corrected for dynamic endogeneity with theory-driven controls including asset tangibility and track record.
 
-**Table 4.14**
+**Table 4.8**
 *Cross-Method Comparison: DiD (TWFE) vs. System GMM*
 
 | Outcome | DiD — TWFE | System GMM | Directional Consistency |
@@ -306,7 +315,7 @@ Significant effects under time-only fixed effects or pooled OLS (no FE) disappea
 
 **Heterogeneous Effects by Firm Size**
 
-**Table 4.15**
+**Table 4.9**
 *Treatment Effect Heterogeneity by Firm Size*
 
 | Outcome | Small Firms | Large Firms |
@@ -321,11 +330,11 @@ Large firms exhibit significantly stronger ESG score improvements (β = 0.274 vs
 
 ---
 
-### 4.5. Discussion of Findings
+### 4.6. Discussion of Findings
 
-#### 4.5.1. Overview
+#### 4.6.1. Overview
 
-**Table 4.16**
+**Table 4.10**
 *Summary of Hypotheses and Empirical Outcomes*
 
 | Research Question | Finding | Primary Evidence |
@@ -335,14 +344,14 @@ Large firms exhibit significantly stronger ESG score improvements (β = 0.274 vs
 | Does green bond issuance improve ESG Score? | **Conditionally supported.** Significant under entity FE; absorbed under TWFE. | Entity FE: β = 0.057, *p* = .050* |
 | Does green bond issuance reduce emissions intensity? | **Inconclusive.** Consistently negative point estimate but non-significant with theory-driven controls. | GMM: β = −0.0839, *p* = .284 |
 | Is green bond certification meaningful? | **Not supported.** Certification nearly universal; substantive ESG improvement extremely rare. | 98.5% certified; 3.9% ESG-verified |
-| Do effects differ by firm size? | **Supported.** Larger firms exhibit stronger ESG gains but worse accounting returns. | See Table 4.15 |
-| Are parallel trends valid? | **Partially supported.** Pooled test fails; cohort analysis shows 0/4 violations for ROA. | See Tables 4.8 and 4.12 |
+| Do effects differ by firm size? | **Supported.** Larger firms exhibit stronger ESG gains but worse accounting returns. | See Table 4.9 |
+| Are parallel trends valid? | **Partially supported.** Pooled test fails; cohort analysis shows 0/4 violations for ROA. | See Tables 4.2 and 4.6 |
 
-#### 4.5.2. Green Bond Certification and the Greenwashing Hypothesis
+#### 4.6.2. Green Bond Certification and the Greenwashing Hypothesis
 
 A central contribution of this study is the greenwashing and authenticity analysis of 333 ASEAN green bonds, yielding a composite score across three dimensions: ESG improvement, third-party certification, and issuer-level credibility.
 
-**Table 4.17**
+**Table 4.11**
 *Green Bond Authenticity Score — Descriptive Statistics (N = 333)*
 
 | Metric | Value |
@@ -351,7 +360,7 @@ A central contribution of this study is the greenwashing and authenticity analys
 | ICMA-certified bonds | 326 / 333 (97.9%) |
 | Bonds with verified ESG improvement | 13 / 333 (3.9%) |
 
-**Table 4.18**
+**Table 4.12**
 *Authenticity Score Distribution*
 
 | Category | *n* | % |
@@ -361,7 +370,7 @@ A central contribution of this study is the greenwashing and authenticity analys
 | Low (score 40–59) | 314 | 94.3% |
 | Unverified (score < 40) | 6 | 1.8% |
 
-**Table 4.19**
+**Table 4.13**
 *Mean Score by Authenticity Component*
 
 | Component | Maximum Score | Mean Score |
@@ -380,19 +389,19 @@ The findings are interpreted within a signaling theory framework (Flammer, 2021;
 However, the evidence does not support a conclusion of purely symbolic greenwashing. While the reduction in direct emissions intensity under System GMM (β = −0.084, *p* = .284) is not statistically significant in this more robust specification, the point estimate remains negative across all tested models. This suggests a potential operational transition that is currently indistinguishable from noise given the sparse treatment and short post-issuance window, but warrants continued monitoring as more data becomes available.
 
 
-#### 4.5.3. Financial Performance Effects
+#### 4.6.3. Financial Performance Effects
 
 The null result for ROA is robust across all five DiD specifications, both DiD and GMM methods, and all cohorts with sufficient pre-treatment data (0/4 cohort violations). This consistency strengthens the conclusion that green bond issuance does not produce measurable short-run improvements in accounting-based profitability within the ASEAN context.
 
 The weak positive signal for Tobin's Q (significant only under time fixed effects, *p* = .080†; absorbed under TWFE) is consistent with a market premium that dissipates once firm-level heterogeneity is controlled for. This finding aligns with prior evidence of a "greenium" in bond markets (Larcker & Watts, 2020) but suggests that the equity market premium, if present, is driven by firm-level characteristics correlated with green bond issuance rather than the issuance event itself.
 
-#### 4.5.4. Environmental Performance Effects
+#### 4.6.4. Environmental Performance Effects
 
 ESG score improvements are sensitive to specification. Positive effects under entity fixed effects (β = 0.057, *p* = .050) disappear under TWFE (β = 0.020, *p* = .610) and are not statistically significant in the aggregated cohort ATT (*p* = .292). This pattern confirms that aggregate ESG score trajectories reflect sector-wide ESG reporting trends rather than issuer-specific treatment effects — a finding consistent with the well-documented limitations of composite ESG ratings as measures of genuine environmental performance (Berg et al., 2022).
 
 The direct emissions intensity result from System GMM also fails to achieve statistical significance (β = −0.084, *p* = .284) once full theory-driven controls are included. This suggests that while there is a directional decrease in emissions following issuance, the effect cannot be robustly distinguished from firm-level quality or pre-existing operational trajectories.
 
-#### 4.5.5. Methodological Limitations
+#### 4.6.5. Methodological Limitations
 
 Several limitations constrain the internal and external validity of this study. First, treatment is sparse: only 20 of 3,964 firms (0.50%) issued green bonds during the observation window, limiting statistical power for all subgroup analyses. Second, the 2020 treatment cohort has zero pre-treatment observations, rendering parallel trends untestable for 25% of treated firms. Third, the short panel window (six years) may be insufficient to capture long-run environmental or financial effects that materialize over a decade or more. Fourth, the absence of bond-level yield data precludes a formal greenium analysis; the interest expense proxy was investigated but proved too noisy for reliable estimation. Finally, the 2024 cohort ESG parallel trends violation suggests potential anticipatory effects, which may reflect either selection into treatment or a limitation of the cohort estimation approach given the minimal post-treatment window.
 
