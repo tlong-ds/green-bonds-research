@@ -23,7 +23,7 @@
 | `WC02999` | Total Assets | Sum of all current and non-current assets |
 | `WC02201` | Current Assets – Total | Cash, receivables, inventories and other assets due within 1 year |
 | `WC04601` | Capital Expenditure (CAPEX) | Funds used to acquire or upgrade physical assets |
-| `WC08326` | Return on Assets (ROA) % | Net income / total assets × 100 |
+| `WC08326` | Return on Assets (ROA) % | Net income / total assets. **Note:** Can be negative (losses). In processed data, normalized to decimal scale (e.g., 5% = 0.05). |
 | `WC08301` | Return on Equity (ROE) % | Net income / common equity × 100 |
 | `WC07011` | Number of Employees | Total full-time equivalent employees |
 | `WC04860` | Free Cash Flow | Funds from operations (operating cash flow proxy) |
@@ -58,7 +58,7 @@
 
 | Code | Name | Description |
 |---|---|---|
-| `TRESGS` | ESG Score (overall) | Overall company ESG score based on self-reported E, S and G pillar data. Scale: 0–100 |
+| `TRESGS` | ESG Score (overall) | Overall company ESG score based on self-reported E, S and G pillar data. **Note:** Raw scale 0–100, but normalized to 0–1 in processed data (e.g., 50 → 0.50). |
 | `ENERDP013` | Total Energy Consumed | Total direct and indirect energy consumption reported by the company (GJ or MWh) |
 | `ENERDP014` | Renewable Energy Use | Share or total of energy from renewable sources |
 | `ENERDP768` | Carbon / GHG Intensity | GHG emissions per unit of output (carbon intensity metric) |
@@ -123,3 +123,29 @@ Download from: [https://databank.worldbank.org](https://databank.worldbank.org) 
 ---
 
 *Reference compiled for ASEAN green bond panel study, 2015–2024. Sources: LSEG Datastream Worldscope, LSEG ASSET4 ESG, World Bank WDI.*
+---
+
+## 6. Computed Ratios (Engineered in Pipeline)
+
+These variables are computed in `asean_green_bonds/data/processing.py::create_financial_ratios()`.
+
+| Variable | Formula | Description | Data Quality Notes |
+|---|---|---|---|
+| `Firm_Size` | ln(total_assets) | Natural log of total assets | Standard size measure |
+| `Leverage` | total_debt / total_assets | Financial leverage ratio | Range: 0–1+ |
+| `Asset_Turnover` | net_sales_or_revenues / total_assets | Sales efficiency | Typical range: 0.5–2.0 |
+| `Capital_Intensity` | total_assets / net_sales_or_revenues | Capital requirements | **Capped at 100.** Min revenue threshold: 1M. Prevents division-by-zero for low-revenue firms. |
+| `Cash_Ratio` | cash / current_liabilities_total | Liquidity measure | **Capped at 5.0.** Values >5 likely data errors. |
+| `asset_tangibility` | (total_assets − current_assets_total) / total_assets | Fixed asset intensity | **Computed from actual balance sheet data** (not sector proxy). Range: 0–1. Fallback to sector proxy (0.55 default) only when data missing. |
+| `Tobin_Q` | (market_capitalization + total_liabilities) / total_assets | Market valuation metric | **Capped at 10.** Formula uses market cap + total liabilities (not just market cap / assets). |
+| `implied_cost_of_debt` | interest_expense_total / total_debt | Borrowing cost proxy | **Capped at 0.50 (50%).** Min debt threshold: 1M. "Greenium" indicator. |
+
+**Key Data Quality Improvements:**
+- **asset_tangibility:** Now computed from actual fixed assets instead of using sector-based default (0.55) for all observations.
+- **Capital_Intensity:** Capped at 100 and requires minimum revenue of 1M to prevent extreme values from low-revenue firms.
+- **Cash_Ratio:** Capped at 5.0 to handle data entry errors (e.g., cash > 10× current liabilities).
+- **implied_cost_of_debt:** Capped at 50% as higher values are economically implausible for standard debt.
+
+---
+
+*Last updated: 2026-04-03 — Data quality improvements from professor feedback*

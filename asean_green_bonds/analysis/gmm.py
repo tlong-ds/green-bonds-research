@@ -646,19 +646,50 @@ def estimate_system_gmm(
     # Instruments rank check (instruments are many, so we can be more aggressive)
     instruments_clean = _ensure_full_rank(instruments_clean)
 
-    # Cross-matrix correlation check (instruments vs regressors)
+    # Cross-matrix correlation check (instruments vs EXOGENOUS regressors only)
+    # Note: We do NOT drop instruments for correlating with endogenous variables
+    # since that correlation is exactly what makes them valid instruments in GMM.
     if not instruments_clean.empty:
-        regressors = exog_clean.copy()
-        if endog_clean is not None:
-            regressors = pd.concat([regressors, endog_clean], axis=1)
-        
+        # Only check correlation with exogenous variables, not endogenous
         to_drop_instr = []
         for instr_col in instruments_clean.columns:
-            for reg_col in regressors.columns:
-                corr_val = abs(np.corrcoef(instruments_clean[instr_col], regressors[reg_col])[0, 1])
-                if corr_val > 0.95:
-                    to_drop_instr.append(instr_col)
-                    break
+            for exog_col in exog_clean.columns:
+                if exog_col == 'const':
+                    continue
+                try:
+                    corr_val = abs(np.corrcoef(instruments_clean[instr_col], exog_clean[exog_col])[0, 1])
+                    if np.isnan(corr_val):
+                        continue
+                    if corr_val > 0.99:  # Higher threshold for instruments
+                        to_drop_instr.append(instr_col)
+                        break
+                except Exception:
+                    continue
+        
+        # Never drop ALL instruments if we have endogenous variables
+        if to_drop_instr and endog_clean is not None and len(endog_clean.columns) > 0:
+            remaining = [c for c in instruments_clean.columns if c not in to_drop_instr]
+            if len(remaining) == 0:
+                # Keep the instrument with lowest max correlation to exogenous vars
+                best_instr = None
+                best_max_corr = 1.0
+                for instr_col in instruments_clean.columns:
+                    max_corr = 0.0
+                    for exog_col in exog_clean.columns:
+                        if exog_col == 'const':
+                            continue
+                        try:
+                            corr_val = abs(np.corrcoef(instruments_clean[instr_col], exog_clean[exog_col])[0, 1])
+                            if not np.isnan(corr_val):
+                                max_corr = max(max_corr, corr_val)
+                        except Exception:
+                            pass
+                    if max_corr < best_max_corr:
+                        best_max_corr = max_corr
+                        best_instr = instr_col
+                if best_instr:
+                    to_drop_instr = [c for c in to_drop_instr if c != best_instr]
+        
         if to_drop_instr:
             instruments_clean = instruments_clean.drop(columns=to_drop_instr)
 

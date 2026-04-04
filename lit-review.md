@@ -53,3 +53,51 @@ Third, the persistence of the "Financial Impact Paradox." There is a profound co
 Drawing upon the aforementioned research gaps, this study is meticulously designed to provide a more comprehensive and rigorous examination of the impacts of green bond issuance within the ASEAN region. Rather than relying solely on subjective composite ESG scores, this research pioneers the use of direct operational metrics such as Greenhouse Gas (GHG) intensity and energy consumption intensity, to confront the “greenwashing puzzle” head-on. Furthermore, by integrating specific quantitative environmental targets into the analytical model, the study aims to decode the signaling mechanism through which green bonds transition from symbolic commitments into substantive financial and environmental performance. By employing an advanced methodological framework that combines PSM-DiD with System GMM, this research not only addresses the technical shortcomings of prior studies but also provides a robust empirical foundation for managers and policymakers in fostering a credible sustainable financial market in Southeast Asia.
 
 
+
+## 2.5. Research Hypotheses
+
+Drawing on stakeholder theory, signaling theory, and the resource-based view, and informed by the empirical patterns documented in prior literature, we propose the following formal hypotheses to guide this investigation:
+
+### H1: Environmental Performance Impact
+
+**H1a:** Green bond issuance is positively associated with improvements in ESG scores.
+
+*Theoretical basis:* Stakeholder theory posits that green bond issuance represents a firm's response to stakeholder pressure for environmental accountability (Flammer, 2021). Signaling theory further suggests that transparent environmental commitments reduce information asymmetry and enhance credibility (Tang & Zhang, 2020). Prior evidence from Japan (Bai, 2025) and Europe (Ordonez-Borrallo et al., 2024) supports positive ESG effects when firms make verifiable commitments.
+
+**H1b:** Green bond issuance is negatively associated with emissions intensity (GHG emissions per unit revenue).
+
+*Theoretical basis:* The resource-based view suggests that green bond proceeds directed toward operational improvements (e.g., renewable energy, efficiency upgrades) create firm-specific capabilities that reduce emissions (Hart, 1995). However, the "greenwashing puzzle" (Hoang et al., 2020) suggests this effect may be context-dependent, particularly in emerging markets with weaker monitoring infrastructure.
+
+### H2: Financial Performance Impact
+
+**H2a:** Green bond issuance is positively associated with accounting profitability (ROA).
+
+*Theoretical basis:* If green bonds reduce information asymmetry and attract lower-cost capital (signaling theory), and if proceeds are deployed to enhance operational efficiency (RBV), profitability should improve (Bai, 2025). However, competing evidence suggests short-term compliance costs may offset benefits (Hoang et al., 2020), making this an empirical question in the ASEAN context.
+
+**H2b:** Green bond issuance is positively associated with firm valuation (Tobin's Q).
+
+*Theoretical basis:* Even absent immediate accounting gains, market-based valuation may reflect investor expectations of future benefits or reduced tail risks (Flammer, 2021; Lemos, 2025). The "greenium" literature suggests equity markets reward environmental commitments independently of current cash flows.
+
+**H2c:** Green bond issuance is negatively associated with the cost of debt (interest expense / total debt).
+
+*Theoretical basis:* The existence of a "greenium" in bond markets (Gianfrate & Peri, 2019; Larcker & Watts, 2020) implies that green bond issuers should secure subsequent debt at lower rates, reflecting enhanced creditworthiness and stakeholder trust.
+
+### H3: Certification and Authenticity Effects
+
+**H3a:** Bonds with third-party certification (CBI/ICMA) demonstrate stronger environmental performance improvements than self-labeled green bonds.
+
+*Theoretical basis:* Certification reduces information asymmetry more credibly than self-labeling (Fatica & Panzica, 2021) and imposes reputational costs on issuers who fail to deliver (Bachelet et al., 2019), thus strengthening the signaling mechanism.
+
+**H3b:** Bonds with higher authenticity scores (combining ESG performance, certification, and issuer credibility) demonstrate stronger positive effects on both environmental and financial outcomes.
+
+*Theoretical basis:* Authenticity captures the alignment between stated environmental intent and demonstrated capability (RBV). High-authenticity issuers possess the organizational infrastructure to convert green financing into real operational improvements, whereas low-authenticity issuers engage in symbolic compliance (Marquis & Qian, 2014).
+
+### H4: Moderating Effects
+
+**H4:** The positive effects of green bond issuance on environmental and financial performance are stronger for larger firms.
+
+*Theoretical basis:* Stakeholder theory predicts that larger firms face greater scrutiny and reputational pressure, incentivizing genuine compliance (Viona et al., 2025). Larger firms also possess greater absorptive capacity and economies of scale in implementing green technologies (RBV), though they may also incur higher reporting and compliance costs.
+
+---
+
+These hypotheses guide the empirical investigation in Chapters 3 and 4, where we employ PSM-DiD and System GMM to isolate causal effects while controlling for selection bias and dynamic endogeneity.

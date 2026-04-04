@@ -593,9 +593,11 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
     - Firm_Size = ln(total_assets)
     - Leverage = total_debt / total_assets
     - Asset_Turnover = net_sales_or_revenues / total_assets
-    - Capital_Intensity = total_assets / net_sales_or_revenues
-    - Cash_Ratio = cash / current_liabilities_total
-    - Tobin_Q = (Market Capitalization + Total Liabilities) / Total Assets
+    - Capital_Intensity = total_assets / net_sales_or_revenues (capped at 100, min revenue 1M)
+    - Cash_Ratio = cash / current_liabilities_total (capped at 5.0)
+    - asset_tangibility = (total_assets - current_assets_total) / total_assets
+    - Tobin_Q = (Market Capitalization + Total Liabilities) / Total Assets (capped at 10)
+    - implied_cost_of_debt = interest_expense_total / total_debt (capped at 0.5, min debt 1M)
     """
     df = df.copy()
     
@@ -619,18 +621,44 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
     )
     
     # Capital Intensity: total assets / net sales
+    # Add minimum revenue threshold (1M) and cap at 100 to prevent explosion
+    MIN_REVENUE_THRESHOLD = 1e6
     df['Capital_Intensity'] = np.where(
-        (df['net_sales_or_revenues'] > 0) & (df['net_sales_or_revenues'].notna()) & (df['total_assets'].notna()),
+        (df['net_sales_or_revenues'] > MIN_REVENUE_THRESHOLD) & 
+        (df['net_sales_or_revenues'].notna()) & 
+        (df['total_assets'].notna()) &
+        (df['total_assets'] > 0),
         df['total_assets'] / df['net_sales_or_revenues'],
         np.nan
     )
+    # Cap at economically reasonable maximum
+    df.loc[df['Capital_Intensity'] > 100, 'Capital_Intensity'] = 100
     
     # Cash Ratio: cash / current liabilities
+    # Cap at 5.0 (500%) - values above are likely data errors
     df['Cash_Ratio'] = np.where(
         (df['current_liabilities_total'] > 0) & (df['current_liabilities_total'].notna()) & (df['cash'].notna()),
         df['cash'] / df['current_liabilities_total'],
         np.nan
     )
+    # Cap at economically reasonable maximum
+    df.loc[df['Cash_Ratio'] > 5.0, 'Cash_Ratio'] = 5.0
+    
+    # Asset Tangibility: fixed assets / total assets
+    # Compute fixed assets as total_assets - current_assets_total
+    if 'current_assets_total' in df.columns:
+        df['asset_tangibility'] = np.where(
+            (df['total_assets'] > 0) & 
+            (df['total_assets'].notna()) & 
+            (df['current_assets_total'].notna()),
+            (df['total_assets'] - df['current_assets_total']) / df['total_assets'],
+            np.nan
+        )
+        # Ensure tangibility is in [0, 1] range
+        df.loc[df['asset_tangibility'] < 0, 'asset_tangibility'] = 0
+        df.loc[df['asset_tangibility'] > 1, 'asset_tangibility'] = 1
+    else:
+        df['asset_tangibility'] = np.nan
 
     # Tobin's Q = (Market Value of Equity + Total Liabilities) / Total Assets
     # Preference for market_capitalization, fallback to market_value

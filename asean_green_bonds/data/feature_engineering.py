@@ -329,6 +329,16 @@ def merge_psm_into_panel(
 
     # Step 3: Merge issuer-year signals into panel (as-of by year)
     df['org_permid'] = pd.to_numeric(df['org_permid'], errors='coerce')
+    
+    # Drop existing PSM columns from panel to avoid merge suffix conflicts (_x, _y)
+    # These will be re-populated from the authoritative green bonds source
+    psm_merge_cols = ['has_green_framework', 'issuer_track_record', 'prior_green_bonds']
+    existing_psm = [c for c in psm_merge_cols if c in df.columns]
+    if existing_psm:
+        df = df.drop(columns=existing_psm)
+        if verbose:
+            print(f"  ✓ Dropped existing PSM columns to avoid merge conflict: {existing_psm}")
+    
     df = df.merge(
         issuer_year,
         left_on=['org_permid', 'Year'],
@@ -343,18 +353,24 @@ def merge_psm_into_panel(
             df[col] = df.groupby('org_permid')[col].ffill()
 
     # Step 4: Merge asset tangibility (issuer-level)
+    # IMPORTANT: Preserve actual computed asset_tangibility from panel if available
+    # Only fill missing values with green bond sector-based proxy as fallback
     if 'asset_tangibility' in df.columns:
+        # Save actual computed values
+        actual_tangibility = df['asset_tangibility'].copy()
         df = df.merge(asset_map, on='org_permid', how='left', suffixes=('', '_issuer'))
-        df['asset_tangibility'] = df['asset_tangibility'].fillna(df['asset_tangibility_issuer'])
+        # Use actual values first, then issuer proxy, then default
+        df['asset_tangibility'] = actual_tangibility.fillna(df['asset_tangibility_issuer']).fillna(DEFAULT_TANGIBILITY)
         df = df.drop(columns=['asset_tangibility_issuer'], errors='ignore')
     else:
         df = df.merge(asset_map, on='org_permid', how='left')
+        df['asset_tangibility'] = df['asset_tangibility'].fillna(DEFAULT_TANGIBILITY)
 
     # Step 5: Fill defaults for controls and pre-issuance years
     df['has_green_framework'] = df['has_green_framework'].fillna(0).astype(int)
     df['issuer_track_record'] = df['issuer_track_record'].fillna(0).astype(int)
     df['prior_green_bonds'] = df['prior_green_bonds'].fillna(0).astype(int)
-    df['asset_tangibility'] = df['asset_tangibility'].fillna(DEFAULT_TANGIBILITY)
+    # asset_tangibility already filled in Step 4
 
     if verbose:
         print(f"  ✓ Merged into panel: {df.shape}")
