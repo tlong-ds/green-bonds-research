@@ -28,7 +28,7 @@ Rốt cục scale là 0-1 hay 0-100 ?
 
 Biến L1_Capital_Intensity  = Capital expenditures divided by total assets at t – 1
 
-Về mặt logic thì biến này nằm trong khoảng 0-1. Sao số nó to thế này. Nhất là giá trị max tận 13 nghìn
+Về mặt logic thì biến này nằm trong khoảng 0-1ran. Sao số nó to thế này. Nhất là giá trị max tận 13 nghìn
 
 Biến L1_Cash_Ratio cùng vậy, sao có giá trị max to thế nhỉ. Tức là tiền mặt gấp 11 lần total asset ?
 

@@ -10,7 +10,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from typing import Tuple, Optional, Dict, List, Any, Union
 import warnings
-from ..config import PSM_CALIPER, PSM_CALIPER_METHOD, PSM_QUALITY_CONFIG
+from ..config import (
+    PSM_CALIPER,
+    PSM_CALIPER_METHOD,
+    PSM_QUALITY_CONFIG,
+    PSM_FEATURES,
+    PSM_RELAXED_CALIPER_FACTOR,
+    PSM_RELAXED_CALIPER_MIN,
+)
 
 # Suppress only specific expected warnings, not all
 warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
@@ -20,6 +27,9 @@ def estimate_propensity_scores(
     df: pd.DataFrame,
     treatment_col: str = 'green_bond_issue',
     features: Optional[List[str]] = None,
+    add_industry_fe: bool = True,
+    add_country_fe: bool = True,
+    exclude_separation_vars: bool = True,
 ) -> pd.Series:
     """
     Estimate propensity scores (probability of treatment) via logistic regression.
@@ -31,7 +41,13 @@ def estimate_propensity_scores(
     treatment_col : str, optional
         Name of treatment variable (default: 'green_bond_issue').
     features : list, optional
-        Features for propensity model. If None, auto-selects.
+        Features for propensity model. If None, uses enhanced default set.
+    add_industry_fe : bool, optional
+        Whether to include industry (TRBC sector) fixed effects (default: True).
+    add_country_fe : bool, optional
+        Whether to include country fixed effects (default: True).
+    exclude_separation_vars : bool, optional
+        Whether to exclude variables that cause perfect/quasi-separation (default: True).
         
     Returns
     -------
@@ -40,31 +56,103 @@ def estimate_propensity_scores(
         
     Notes
     -----
-    Uses logistic regression: P(treatment=1 | X) to balance observable characteristics
+    Uses enhanced logistic regression with theory-driven variables:
+    P(treatment=1 | X, Industry, Country) to balance observable characteristics
     between treated and control firms before matching.
+    
+    Handles perfect separation by excluding problematic variables (has_green_framework)
+    and uses regularized logistic regression for stability.
     """
     if features is None:
-        # Default features for propensity score model
-        features = [
-            'L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover',
-            'L1_Capital_Intensity', 'L1_Cash_Ratio'
-        ]
+        # Enhanced default features for propensity score model
+        # Theory-driven specification capturing multi-dimensional selection process
+        features = list(PSM_FEATURES)
     
-    # Prepare data
-    df_ps = df[[treatment_col] + features].dropna()
-    X = df_ps[features]
+    # Check for problematic variables that cause perfect separation
+    if exclude_separation_vars:
+        # Remove variables known to cause quasi-separation
+        separation_vars = ['has_green_framework']  # All treated=1, most control=0
+        # Detect additional binary variables with extreme separation ratios (>10:1)
+        for feature in list(features):
+            if feature not in df.columns:
+                continue
+            series = df[feature].dropna()
+            unique_vals = set(series.unique())
+            # Only evaluate binary variables to avoid false positives
+            if unique_vals.issubset({0, 1, True, False}):
+                treated = df[df[treatment_col] == 1][feature].dropna()
+                control = df[df[treatment_col] == 0][feature].dropna()
+                treated_rate = treated.mean() if len(treated) > 0 else 0.0
+                control_rate = control.mean() if len(control) > 0 else 0.0
+                # Avoid division by zero; treat zero as extreme separation
+                if treated_rate == 0 or control_rate == 0:
+                    separation_vars.append(feature)
+                    continue
+                ratio = max(treated_rate / control_rate, control_rate / treated_rate)
+                if ratio > 10.0:
+                    separation_vars.append(feature)
+        separation_vars = list(dict.fromkeys(separation_vars))
+        available_features = [f for f in features if f in df.columns and f not in separation_vars]
+        if len(available_features) < len(features):
+            print(f"Excluded {len(features) - len(available_features)} separation variables from propensity model")
+        features = available_features
+    
+    # Prepare feature list for data extraction
+    required_cols = [treatment_col] + features
+    
+    # Add fixed effects variables if requested
+    if add_industry_fe and 'trbc_business_sector' in df.columns:
+        required_cols.append('trbc_business_sector')
+    if add_country_fe and 'country' in df.columns:
+        required_cols.append('country')
+    
+    # Prepare data (keep observations with all required variables)
+    df_ps = df[required_cols].dropna()
+    
+    if len(df_ps) == 0:
+        raise ValueError("No observations remain after dropping missing values. Check feature availability.")
+    
+    # Separate continuous features and categorical fixed effects
+    X_continuous = df_ps[features]
     y = df_ps[treatment_col]
     
-    # Standardize features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    # Create dummy variables for fixed effects
+    X_dummies = pd.DataFrame(index=df_ps.index)
     
-    # Fit logistic model
-    model = LogisticRegression(max_iter=1000, random_state=42)
-    model.fit(X_scaled, y)
+    if add_industry_fe and 'trbc_business_sector' in df_ps.columns:
+        industry_dummies = pd.get_dummies(df_ps['trbc_business_sector'], prefix='industry', drop_first=True)
+        X_dummies = pd.concat([X_dummies, industry_dummies], axis=1)
+    
+    if add_country_fe and 'country' in df_ps.columns:
+        country_dummies = pd.get_dummies(df_ps['country'], prefix='country', drop_first=True)  
+        X_dummies = pd.concat([X_dummies, country_dummies], axis=1)
+    
+    # Combine continuous features with dummy variables
+    X_combined = pd.concat([X_continuous, X_dummies], axis=1)
+    
+    # Standardize only the continuous features (not dummy variables)
+    scaler = StandardScaler()
+    X_continuous_scaled = pd.DataFrame(
+        scaler.fit_transform(X_continuous), 
+        columns=X_continuous.columns, 
+        index=X_continuous.index
+    )
+    
+    # Combine scaled continuous and dummy variables
+    X_final = pd.concat([X_continuous_scaled, X_dummies], axis=1)
+    
+    # Fit logistic model with L1 regularization for stability
+    model = LogisticRegression(
+        penalty='l1',  # L1 regularization helps with separation issues
+        C=1.0,         # Regularization strength (lower = more regularization)
+        max_iter=2000, # Increased iterations for convergence
+        solver='liblinear',  # Required for L1 penalty
+        random_state=42
+    )
+    model.fit(X_final, y)
     
     # Get propensity scores
-    ps = model.predict_proba(X_scaled)[:, 1]
+    ps = model.predict_proba(X_final)[:, 1]
     
     # Return as Series with original index
     result = pd.Series(np.nan, index=df.index)
@@ -270,7 +358,7 @@ def nearest_neighbor_matching(
     caliper: Union[float, str] = 0.1,
     caliper_method: str = 'austin',
     ratio: int = 1,
-    replacement: bool = False,
+    replacement: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Perform 1-to-k nearest neighbor matching with caliper.
@@ -516,11 +604,12 @@ def create_matched_dataset(
     ps_col: str = 'propensity_score',
     caliper: Optional[Union[float, str]] = None,
     ratio: int = 4,
+    replacement: Optional[bool] = None,
     check_support: bool = True,
     trim_to_common_support: Optional[bool] = None,
     trimming_method: Optional[str] = None,
     trimming_alpha: Optional[float] = None,
-    enforce_quality: bool = False,
+    enforce_quality: Optional[bool] = None,
     min_matched_treated_ratio: Optional[float] = None,
     max_abs_std_diff: Optional[float] = None,
     balance_features: Optional[List[str]] = None,
@@ -540,6 +629,8 @@ def create_matched_dataset(
         Maximum PS distance. If None, resolves from config policy.
     ratio : int, optional
         Controls per treated unit (default: 4).
+    replacement : bool, optional
+        If True, allow reuse of control units (default: True).
     check_support : bool, optional
         If True, verify common support first (default: True).
     trim_to_common_support : bool, optional
@@ -578,10 +669,14 @@ def create_matched_dataset(
         trimming_method = str(PSM_QUALITY_CONFIG.get('trimming_method', 'crump'))
     if trimming_alpha is None:
         trimming_alpha = float(PSM_QUALITY_CONFIG.get('trimming_alpha', 0.1))
+    if enforce_quality is None:
+        enforce_quality = bool(PSM_QUALITY_CONFIG.get('enforce_quality', False))
     if min_matched_treated_ratio is None:
         min_matched_treated_ratio = float(PSM_QUALITY_CONFIG.get('min_matched_treated_ratio', 0.7))
     if max_abs_std_diff is None:
         max_abs_std_diff = float(PSM_QUALITY_CONFIG.get('max_abs_std_diff', 0.1))
+    if replacement is None:
+        replacement = True
     
     # Create year-level treatment indicator
     df['ever_treated'] = df.groupby('org_permid')[treatment_col].transform('max')
@@ -628,10 +723,19 @@ def create_matched_dataset(
     else:
         diagnostics['trimming'] = {'enabled': False, 'applied': False}
     
+    # Resolve relaxed caliper policy for sparse treatment settings
+    if caliper_value == 'auto' and caliper_method in {'austin', 'logit', 'rosenbaum'}:
+        all_ps = df[ps_col].dropna()
+        base_caliper = calculate_optimal_caliper(all_ps, method=caliper_method)
+        relaxed_caliper = max(base_caliper * PSM_RELAXED_CALIPER_FACTOR, PSM_RELAXED_CALIPER_MIN)
+        caliper_value = float(relaxed_caliper)
+        caliper_method = f"relaxed_{caliper_method}"
+
     # Perform matching
     matched_df, match_stats = nearest_neighbor_matching(
         df, ps_col=ps_col, treatment_col=treatment_col,
-        caliper=caliper_value, caliper_method=caliper_method, ratio=ratio
+        caliper=caliper_value, caliper_method=caliper_method, ratio=ratio,
+        replacement=replacement
     )
     
     diagnostics['matching_stats'] = match_stats
@@ -639,12 +743,11 @@ def create_matched_dataset(
         'requested_caliper': caliper,
         'resolved_method': caliper_method,
         'resolved_caliper': float(match_stats.get('caliper', np.nan)),
+        'relax_factor': PSM_RELAXED_CALIPER_FACTOR,
+        'relax_min': PSM_RELAXED_CALIPER_MIN,
     }
 
-    features_for_balance = balance_features or [
-        c for c in ['L1_Firm_Size', 'L1_Leverage', 'L1_Asset_Turnover', 'L1_Capital_Intensity', 'L1_Cash_Ratio']
-        if c in matched_df.columns
-    ]
+    features_for_balance = balance_features or [c for c in PSM_FEATURES if c in matched_df.columns]
     balance_df = assess_balance(matched_df, features_for_balance, treatment_col=treatment_col)
     if not balance_df.empty and 'Std_Difference' in balance_df.columns:
         max_smd = float(balance_df['Std_Difference'].abs().max())

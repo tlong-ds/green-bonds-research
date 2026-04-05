@@ -1,4 +1,6 @@
 
+import pandas as pd
+
 def load_financial_data() -> pd.DataFrame:
     """Load combined market data (identifiers)."""
     from asean_green_bonds.config import RAW_DATA_FILES

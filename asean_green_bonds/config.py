@@ -76,6 +76,9 @@ PSM_FEATURES = [
     "L1_Asset_Turnover",
     "L1_Capital_Intensity",
     "L1_Cash_Ratio",
+    "asset_tangibility",
+    "L1_return_on_assets",
+    "issuer_track_record",
     # "prior_green_bonds",  # REMOVED: VIF=∞, identical to issuer_track_record
 ]
 
@@ -111,12 +114,15 @@ PSM_CALIPER = 0.1  # Default caliper for matching (used when PSM_CALIPER_METHOD=
 PSM_RATIO = 4      # Ratio of controls to treated
 PSM_CALIPER_METHOD = "austin"  # 'austin' (0.25*SD), 'logit' (0.2*SD(logit)), or 'fixed'
 PSM_CALIPER_MIN = 0.01  # Minimum caliper to prevent over-restriction
+PSM_RELAXED_CALIPER_FACTOR = 2.0  # Apply to Austin/logit caliper in sparse treatment settings
+PSM_RELAXED_CALIPER_MIN = 0.05  # Lower bound for relaxed caliper
 PSM_QUALITY_CONFIG = {
     "trim_to_common_support": True,  # Enable trimming by default before matching
     "trimming_method": "crump",  # 'crump' or 'percentile'
     "trimming_alpha": 0.1,  # Trimming threshold
     "min_matched_treated_ratio": 0.7,  # Quality gate for retained treated units
     "max_abs_std_diff": 0.1,  # Standardized mean difference gate
+    "enforce_quality": True,  # Raise if quality gates fail
 }
 
 # Statistical significance levels

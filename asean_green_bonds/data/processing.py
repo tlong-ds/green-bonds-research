@@ -493,7 +493,7 @@ def normalize_percentages(df: pd.DataFrame, pct_cols: Optional[list] = None) -> 
     """
     if pct_cols is None:
         pct_cols = [
-            'return_on_assets', 'return_on_equity_total', 'esg_score'
+            'return_on_assets', 'return_on_equity_total'
         ]
     
     df = df.copy()
@@ -593,7 +593,7 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
     - Firm_Size = ln(total_assets)
     - Leverage = total_debt / total_assets
     - Asset_Turnover = net_sales_or_revenues / total_assets
-    - Capital_Intensity = total_assets / net_sales_or_revenues (capped at 100, min revenue 1M)
+    - Capital_Intensity = capital_expenditures / total_assets (capped at 0.5, measures investment intensity)
     - Cash_Ratio = cash / current_liabilities_total (capped at 5.0)
     - asset_tangibility = (total_assets - current_assets_total) / total_assets
     - Tobin_Q = (Market Capitalization + Total Liabilities) / Total Assets (capped at 10)
@@ -620,19 +620,19 @@ def create_financial_ratios(df: pd.DataFrame) -> pd.DataFrame:
         np.nan
     )
     
-    # Capital Intensity: total assets / net sales
-    # Add minimum revenue threshold (1M) and cap at 100 to prevent explosion
-    MIN_REVENUE_THRESHOLD = 1e6
+    # Capital Intensity: capital expenditures / total assets
+    # Measures investment intensity (what fraction of assets invested annually)
+    # Standard finance definition for investment behavior analysis
     df['Capital_Intensity'] = np.where(
-        (df['net_sales_or_revenues'] > MIN_REVENUE_THRESHOLD) & 
-        (df['net_sales_or_revenues'].notna()) & 
-        (df['total_assets'].notna()) &
-        (df['total_assets'] > 0),
-        df['total_assets'] / df['net_sales_or_revenues'],
+        (df['total_assets'] > 0) & 
+        (df['total_assets'].notna()) & 
+        (df['capital_expenditures'].notna()) &
+        (df['capital_expenditures'] >= 0),
+        df['capital_expenditures'] / df['total_assets'],
         np.nan
     )
-    # Cap at economically reasonable maximum
-    df.loc[df['Capital_Intensity'] > 100, 'Capital_Intensity'] = 100
+    # Cap at economically reasonable maximum (50% - extreme but possible)
+    df.loc[df['Capital_Intensity'] > 0.5, 'Capital_Intensity'] = 0.5
     
     # Cash Ratio: cash / current liabilities
     # Cap at 5.0 (500%) - values above are likely data errors
@@ -1653,7 +1653,7 @@ def prepare_full_panel_data(
         allow_fetch=allow_fx_fetch,
     )
 
-    # Normalize percentages (ROA, ROE, ESG score)
+    # Normalize percentages (ROA, ROE,)
     panel = normalize_percentages(panel)
 
     # Pass 1: Winsorize raw financial metrics BEFORE ratio computation
