@@ -58,7 +58,7 @@
 
 | Code | Name | Description |
 |---|---|---|
-| `TRESGS` | ESG Score (overall) | Overall company ESG score based on self-reported E, S and G pillar data. **Note:** Raw scale 0–100, but normalized to 0–1 in processed data (e.g., 50 → 0.50). |
+| `TRESGS` | ESG Score (overall) | Overall company ESG score based on self-reported E, S and G pillar data. **Note:** Scale 0–100 maintained in processed data. |
 | `ENERDP013` | Total Energy Consumed | Total direct and indirect energy consumption reported by the company (GJ or MWh) |
 | `ENERDP014` | Renewable Energy Use | Share or total of energy from renewable sources |
 | `ENERDP768` | Carbon / GHG Intensity | GHG emissions per unit of output (carbon intensity metric) |

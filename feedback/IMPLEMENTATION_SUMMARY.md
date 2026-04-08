@@ -47,7 +47,7 @@
 
 ### 1.4 Updated Variable Documentation ✅
 **Files updated:**
-- `attributes.md` — Corrected ESG Score (now 0-1 normalized), ROA (can be negative)
+- `attributes.md` — Corrected ESG Score (maintains 0-100 scale), ROA (can be negative)
 - Added Section 6: "Computed Ratios" with formulas, caps, and data quality notes
 
 ---

@@ -43,7 +43,7 @@ TEST 3: Cash_Ratio Outlier Cap                        ✅ PASS
   - Max value: 5.00 (was 11.92)
 
 TEST 4: ESG Score Normalization                       ✅ PASS
-  - Range: [0.096, 0.855] (properly normalized to 0-1)
+  - Range: [9.570, 85.450] (maintains original 0-100 scale)
 
 TEST 5: ROA Can Be Negative                           ✅ PASS
   - Min: -0.490 (captures loss-making firms)
@@ -73,7 +73,7 @@ TEST 7: Cost of Debt Cap                              ✅ PASS
 ### Documentation Changes
 - `attributes.md`
   - Corrected ROA description (can be negative)
-  - Corrected ESG Score description (normalized to 0-1)
+  - Corrected ESG Score description (maintains original 0-100 scale)
   - Added Section 6: Computed Ratios with formulas and caps
 
 - `methodology_and_results.md`
@@ -282,7 +282,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 | Why is Cash_Ratio 11.9? | Data errors. Now capped at 5.0 (economic maximum). |
 | Why no hypotheses? | Added H1-H4 with full theoretical grounding in Section 2.5. |
 | Why these authenticity weights? | Added literature justification (Flammer 2021, Fatica & Panzica 2021, etc.). |
-| ESG Scale 0-100 or 0-1? | Normalized to 0-1 in pipeline. Documentation now correct. |
+| ESG Scale 0-100 or 0-1? | Maintains original 0-100 scale throughout pipeline. Documentation now correct. |
 | Can ROA be negative? | Yes - captures loss-making firms. Documentation corrected. |
 
 ---

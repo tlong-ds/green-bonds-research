@@ -15,7 +15,7 @@ This document presents comprehensive descriptive statistics for all key variable
 | **Outcome Variables** | | | | | | | | | |
 | Return on Assets (ROA) | 21,727 | 0.035 | 0.106 | -0.490 | 0.007 | 0.038 | 0.076 | 0.367 | 93.3% |
 | Tobin's Q | 20,634 | 1.402 | 1.349 | 0.321 | 0.763 | 0.993 | 1.458 | 9.587 | 88.6% |
-| ESG Score | 4,143 | 0.476 | 0.179 | 0.096 | 0.338 | 0.473 | 0.610 | 0.855 | 17.8% |
+| ESG Score | 4,143 | 47.630 | 17.860 | 9.570 | 33.790 | 47.270 | 60.950 | 85.450 | 17.8% |
 | ln(Emissions Intensity) | 18,888 | 10.439 | 2.633 | -5.512 | 8.784 | 10.355 | 11.939 | 20.767 | 81.1% |
 | Implied Cost of Debt | 169 | 0.125 | 0.136 | 0.020 | 0.037 | 0.055 | 0.171 | 0.480 | 0.7% |
 | **Control Variables (Lagged)** | | | | | | | | | |
@@ -39,7 +39,7 @@ This document presents comprehensive descriptive statistics for all key variable
 **Distribution Insights:**
 - **ROA**: Interquartile range [0.7%, 7.6%] shows most firms have modest profitability; negative values (below 25th percentile) indicate significant loss-making firms
 - **Tobin's Q**: IQR [0.76, 1.46] suggests most firms trade close to book value; median 0.99 indicates efficient market pricing
-- **ESG Score**: IQR [0.34, 0.61] represents 34th-61st percentile ESG performance; limited to higher-quality firms with ESG reporting
+- **ESG Score**: IQR [33.8, 60.9] represents companies in the 34th-61st percentile range of ESG performance; limited to higher-quality firms with ESG reporting
 - **Firm Size**: IQR [10.48, 13.00] in ln(assets) represents medium to large enterprises ($36K - $440K assets)
 - **Leverage**: IQR [4.7%, 35.8%] shows wide variation in capital structure; median 18.8% is moderate leverage
 
@@ -53,7 +53,7 @@ This document presents comprehensive descriptive statistics for all key variable
 | **Outcome Variables** | | | |
 | Return on Assets (ROA) | 0.046 (0.037) | 0.035 (0.106) | **2.611 (0.011)** |
 | Tobin's Q | 1.242 (1.060) | 1.403 (1.350) | -1.330 (0.187) |
-| ESG Score | 0.696 (0.133) | 0.474 (0.177) | **11.697 (0.000)*** |
+| ESG Score | 69.631 (13.319) | 47.361 (17.742) | **8.845 (0.000)*** |
 | ln(Emissions Intensity) | 13.818 (2.795) | 10.428 (2.626) | **9.383 (0.000)*** |
 | Implied Cost of Debt | 0.042 (0.006) | 0.128 (0.138) | **-7.678 (0.000)*** |
 | **Control Variables (Lagged)** | | | |
@@ -77,7 +77,7 @@ This document presents comprehensive descriptive statistics for all key variable
 3. **Lower Cost of Debt**: Treated firms have **significantly lower implied cost of debt** (4.2% vs 12.8%, p<0.001)
 
 ### Environmental Performance  
-4. **ESG Leadership**: Green bond issuers have **substantially higher ESG scores** (0.696 vs 0.474, p<0.001)
+4. **ESG Leadership**: Green bond issuers have **substantially higher ESG scores** (69.6 vs 47.4 on 0-100 scale, p<0.001)
 5. **Higher Emissions**: Paradoxically, treated firms have **higher emissions intensity** (ln: 13.8 vs 10.4, p<0.001), potentially indicating selection of high-emitting firms seeking improvement
 
 ### Firm Characteristics

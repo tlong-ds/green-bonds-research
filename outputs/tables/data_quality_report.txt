@@ -1,0 +1,28 @@
+======================================================================
+DATA QUALITY REPORT
+======================================================================
+
+📊 PANEL STRUCTURE
+   Entities: 3964
+   Periods: 6
+   Total observations: 23284
+   Balanced: No (unbalanced panel)
+   Missing combinations: 500
+
+📋 MISSING DATA
+   Total missing: 1786765 cells (44.4%)
+
+⚠️  OUTLIERS DETECTED
+   Columns with outliers: 95
+   - capital_expenditures: 2503 outliers
+   - cash: 2219 outliers
+   - current_assets_total: 1903 outliers
+   - current_liabilities_total: 1954 outliers
+   - earnings_bef_interest_tax: 2728 outliers
+
+🎯 TREATMENT VARIATION
+   Treated entities: 20 / 3964
+   Treatment prevalence: 0.3%
+   Timing range: 4 years
+
+======================================================================
